@@ -7,6 +7,7 @@ package caddycertstore
 
 import (
 	"crypto/tls"
+	"fmt"
 	"sync"
 
 	"github.com/caddyserver/caddy/v2"
@@ -33,7 +34,43 @@ func (*CertStoreLoader) CaddyModule() caddy.ModuleInfo {
 	}
 }
 
-// TODO: Implement provisioner and do config validation - confirm Name or Issuer has been set
+// Provision implements caddy.Provisioner.
+func (csl *CertStoreLoader) Provision(ctx caddy.Context) error {
+	repl, ok := ctx.Value(caddy.ReplacerCtxKey).(*caddy.Replacer)
+	if !ok {
+		repl = caddy.NewReplacer()
+	}
+
+	for i, selector := range csl.Certificates {
+		// Validate that either Name or Issuer is set
+		if selector.Name == "" && selector.Issuer == "" {
+			return fmt.Errorf("certificate selector at index %d must have either 'name' or 'issuer' set", i)
+		}
+
+		// Replace placeholders in selector fields
+		csl.Certificates[i] = &CertificateSelector{
+			Name:     repl.ReplaceKnown(selector.Name, ""),
+			Location: repl.ReplaceKnown(selector.Location, ""),
+			Issuer:   repl.ReplaceKnown(selector.Issuer, ""),
+			Tags:     replaceTags(repl, selector.Tags),
+		}
+	}
+
+	return nil
+}
+
+// replaceTags applies the replacer to each tag in the slice.
+func replaceTags(repl *caddy.Replacer, tags []string) []string {
+	if len(tags) == 0 {
+		return tags
+	}
+
+	replaced := make([]string, len(tags))
+	for i, tag := range tags {
+		replaced[i] = repl.ReplaceKnown(tag, "")
+	}
+	return replaced
+}
 
 // LoadCertificates returns the certificates for each search parameter contained in csl.
 func (csl *CertStoreLoader) LoadCertificates() ([]caddytls.Certificate, error) {
@@ -86,3 +123,10 @@ func (csl *CertStoreLoader) Cleanup() error {
 
 	return nil
 }
+
+// Interface guards
+var (
+	_ caddytls.CertificateLoader = (*CertStoreLoader)(nil)
+	_ caddy.Provisioner          = (*CertStoreLoader)(nil)
+	_ caddy.CleanerUpper         = (*CertStoreLoader)(nil)
+)
