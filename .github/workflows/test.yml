@@ -71,6 +71,7 @@ jobs:
         run: go mod download
 
       - name: Run all tests (including integration)
+        shell: bash
         run: go test -v -race -coverprofile=coverage.out -covermode=atomic ./...
 
       - name: Upload coverage to Codecov
