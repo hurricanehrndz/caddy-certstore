@@ -1,0 +1,108 @@
+name: Tests
+
+on:
+  push:
+    branches: [ main, master, develop ]
+  pull_request:
+    branches: [ main, master, develop ]
+  workflow_dispatch:
+
+jobs:
+  # Unit tests on Linux (no integration tests)
+  test-linux:
+    name: Unit Tests (Linux)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: '.go-version'
+          cache: true
+
+      - name: Download dependencies
+        run: go mod download
+
+      - name: Download tools
+        run: go mod download -modfile=tools.mod
+
+      - name: Run unit tests
+        env:
+          SKIP_KEYCHAIN_TESTS: 1
+          SKIP_CERTSTORE_TESTS: 1
+        run: go test -v -race -coverprofile=coverage.out -covermode=atomic ./...
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v4
+        with:
+          file: ./coverage.out
+          flags: unittests,linux
+          name: linux
+
+  # Integration tests on macOS
+  test-macos:
+    name: Integration Tests (macOS)
+    runs-on: macos-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: '.go-version'
+          cache: true
+
+      - name: Download dependencies
+        run: go mod download
+
+      - name: Verify test certificates
+        run: |
+          ls -lh testdata/
+          openssl x509 -in testdata/test-cert.pem -noout -subject -dates
+
+      - name: Run all tests (including integration)
+        run: go test -v -race -coverprofile=coverage.out -covermode=atomic ./...
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v4
+        with:
+          file: ./coverage.out
+          flags: integration,macos
+          name: macos
+
+  # Integration tests on Windows
+  test-windows:
+    name: Integration Tests (Windows)
+    runs-on: windows-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: '.go-version'
+          cache: true
+
+      - name: Download dependencies
+        run: go mod download
+
+      - name: Verify test certificates
+        shell: pwsh
+        run: |
+          Get-ChildItem testdata\
+          openssl x509 -in testdata/test-cert.pem -noout -subject -dates
+
+      - name: Run all tests (including integration)
+        shell: pwsh
+        run: go test -v -race -coverprofile=coverage.out -covermode=atomic ./...
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v4
+        with:
+          file: ./coverage.out
+          flags: integration,windows
+          name: windows
