@@ -70,11 +70,6 @@ jobs:
       - name: Download dependencies
         run: go mod download
 
-      - name: Verify test certificates
-        run: |
-          ls -lh testdata/
-          openssl x509 -in testdata/test-cert.pem -noout -subject -dates
-
       - name: Run all tests (including integration)
         run: go test -v -race -coverprofile=coverage.out -covermode=atomic ./...
 
