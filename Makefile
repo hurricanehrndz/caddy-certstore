@@ -7,3 +7,7 @@ lint:
 .PHONY: format
 format:
 	@go tool -modfile=tools.mod golangci-lint fmt
+
+.PHONY: test
+test:
+	go test -v ./...

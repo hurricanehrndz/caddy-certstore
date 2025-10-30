@@ -2,7 +2,7 @@
 
 ## Build & Test Commands
 - **Build**: `go build -v ./...`
-- **Test all**: `go test -v ./...`
+- **Test all**: `make test`
 - **Test single**: `go test -v -run TestName ./...`
 - **Lint**: `make lint`
 - **Format**: `make format`
@@ -17,6 +17,7 @@
 **JSON Tags**: Use `json:"field_name,omitempty"` for optional config fields (Caddy convention).
 **Alignment**: Align the happy path to the left
 **Complexity**: Ensure code adheres to following coding principles: KISS, SRP, DRY and prioritize clarity over brevity or clever 
+**General**: Use modern features of Go when possible
 
 ## Project Context
 This is a Caddy v2 module for loading TLS certificates from OS certificate stores (macOS Keychain, Windows CertStore). Implements Caddy's `CertificateLoader` interface. Module ID: `tls.certificates.load_certstore`.
