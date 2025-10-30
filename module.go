@@ -9,8 +9,6 @@ import (
 	"crypto/tls"
 	"sync"
 
-	"github.com/tailscale/certstore"
-
 	"github.com/caddyserver/caddy/v2"
 	"github.com/caddyserver/caddy/v2/modules/caddytls"
 )
@@ -23,29 +21,9 @@ func init() {
 // It keeps track of opened stores and identities for proper cleanup.
 type CertStoreLoader struct {
 	// Certificates is the list of certificates to load from the store
-	Certificates []*CertInStore `json:"certificates,omitempty"`
+	Certificates []*CertificateSelector `json:"certificates,omitempty"`
 
 	mu sync.Mutex
-}
-
-type CertInStore struct {
-	// Name is the common name of the certificate to load
-	Name string `json:"name,omitempty"`
-
-	// Location specifies which certificate store to use ("user" or "system")
-	Location string `json:"location,omitempty"`
-
-	// Issuer is the common name of the signing authority (optional filter)
-	Issuer string `json:"issuer,omitempty"`
-
-	// Arbitrary values to associate with this certificate.
-	// Can be useful when you want to select a particular
-	// certificate when there may be multiple valid candidates.
-	Tags []string `json:"tags,omitempty"`
-
-	// runtime resources kept for cleanup (unexported, not serialized)
-	store    certstore.Store
-	identity certstore.Identity
 }
 
 func (*CertStoreLoader) CaddyModule() caddy.ModuleInfo {
@@ -62,37 +40,37 @@ func (csl *CertStoreLoader) LoadCertificates() ([]caddytls.Certificate, error) {
 	certs := make([]caddytls.Certificate, 0, len(csl.Certificates))
 
 	// Load certificates from keychain/certificate store
-	for _, cis := range csl.Certificates {
-		cert, err := csl.loadFromCertStore(cis)
+	for _, cs := range csl.Certificates {
+		cert, err := csl.loadFromCertStore(cs)
 		if err != nil {
 			return nil, err
 		}
 
 		if !isValidCertificate(cert) {
 			// Close resources for invalid certificates
-			cis.cleanup()
+			cs.cleanup()
 			continue
 		}
 
 		certs = append(certs, caddytls.Certificate{
 			Certificate: cert,
-			Tags:        cis.Tags,
+			Tags:        cs.Tags,
 		})
 	}
 
 	return certs, nil
 }
 
-// loadFromCertStore loads a certificate and stores the resources in the CertInStore instance.
-func (csl *CertStoreLoader) loadFromCertStore(cis *CertInStore) (tls.Certificate, error) {
-	cert, store, identity, err := loadCertificateByName(cis.Name, getStoreLocation(cis.Location))
+// loadFromCertStore loads a certificate and stores the resources in the CertificateSelector instance.
+func (csl *CertStoreLoader) loadFromCertStore(selector *CertificateSelector) (tls.Certificate, error) {
+	cert, store, identity, err := loadCertificate(selector)
 	if err != nil {
 		return cert, err
 	}
 
-	// Store resources in the CertInStore for later cleanup
-	cis.store = store
-	cis.identity = identity
+	// Store resources in the CertificateSelector for later cleanup
+	selector.store = store
+	selector.identity = identity
 
 	return cert, nil
 }
@@ -102,21 +80,9 @@ func (csl *CertStoreLoader) Cleanup() error {
 	csl.mu.Lock()
 	defer csl.mu.Unlock()
 
-	for _, cis := range csl.Certificates {
-		cis.cleanup()
+	for _, cs := range csl.Certificates {
+		cs.cleanup()
 	}
 
 	return nil
-}
-
-// cleanup closes the identity and store resources
-func (cis *CertInStore) cleanup() {
-	if cis.identity != nil {
-		cis.identity.Close()
-		cis.identity = nil
-	}
-	if cis.store != nil {
-		cis.store.Close()
-		cis.store = nil
-	}
 }
