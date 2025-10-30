@@ -47,8 +47,8 @@ The module uses the ID `tls.certificates.load_certstore` and can be configured i
 - **`name`**: Common name of the certificate to load (e.g., "example.com")
 - **`issuer`**: Issuer name to match certificates against
 - **`location`**: Certificate store location
-  - macOS: `"system"` or `"user"`, has no real implication on macOS (Keychain)
-  - Windows: `"machine"` or `"user"` (Certificate Store)
+  - macOS: `"system"` or `"user"` (**no effect** - macOS Keychain searches both locations automatically)
+  - Windows: `"machine"` or `"user"` (maps to LocalMachine or CurrentUser Certificate Store)
 - **`tags`**: Optional tags for certificate organization
 
 **Note:** Either `name` or `issuer` must be specified for each certificate selector.

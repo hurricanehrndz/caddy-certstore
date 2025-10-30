@@ -9,7 +9,9 @@ type CertificateSelector struct {
 	// Name is the common name of the certificate to load
 	Name string `json:"name,omitempty"`
 
-	// Location specifies which certificate store to use ("user" or "system")
+	// Location specifies which certificate store to use.
+	// On Windows: "user" (CurrentUser) or "machine" (LocalMachine)
+	// On macOS: "user" or "system" (no effect - Keychain searches both automatically)
 	Location string `json:"location,omitempty"`
 
 	// Issuer is the common name of the signing authority (optional filter)
