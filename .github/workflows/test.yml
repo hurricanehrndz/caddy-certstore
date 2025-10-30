@@ -72,11 +72,11 @@ jobs:
 
       - name: Run all tests (including integration)
         shell: bash
-        run: go test -v -race -coverprofile=coverage.out -covermode=atomic ./...
+        run: go test -v -race -coverprofile=coverage.txt -covermode=atomic ./...
 
       - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@v4
+        uses: codecov/codecov-action@v5
         with:
-          file: ./coverage.out
-          flags: integration,macos
-          name: macos
+          token: ${{ secrets.CODECOV_TOKEN }}
+          flags: integration,${{ runner.os }}
+          name: ${{ runner.os }}
