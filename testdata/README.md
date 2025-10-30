@@ -26,7 +26,12 @@ The `test-cert.p12` file is encrypted with password: `test123`
 
 ## Usage
 
-These certificates are used by `module_darwin_test.go` for integration testing on macOS. The tests import the certificate into the login keychain, run tests, then clean up.
+These certificates are used for platform-specific integration testing:
+
+- **macOS** (`module_darwin_test.go`): Imports into login keychain using `security` command
+- **Windows** (`module_windows_test.go`): Imports into CurrentUser\My store using PowerShell `Import-PfxCertificate`
+
+The tests import the certificate, run tests, then clean up.
 
 ## Regenerating Certificates
 
