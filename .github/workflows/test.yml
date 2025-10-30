@@ -8,10 +8,10 @@ on:
   workflow_dispatch:
 
 jobs:
-  # Unit tests on Linux (no integration tests)
-  test-linux:
-    name: Unit Tests (Linux)
-    runs-on: ubuntu-latest
+  # Unit tests on macOS (certstore doesn't support Linux)
+  test-unit:
+    name: Unit Tests
+    runs-on: macos-latest
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -28,7 +28,7 @@ jobs:
       - name: Download tools
         run: go mod download -modfile=tools.mod
 
-      - name: Run unit tests
+      - name: Run unit tests (skip integration)
         env:
           SKIP_KEYCHAIN_TESTS: 1
           SKIP_CERTSTORE_TESTS: 1
@@ -38,8 +38,8 @@ jobs:
         uses: codecov/codecov-action@v4
         with:
           file: ./coverage.out
-          flags: unittests,linux
-          name: linux
+          flags: unittests
+          name: unit-tests
 
   # Integration tests on macOS
   test-macos:

@@ -13,7 +13,7 @@ jobs:
   # Linting with make lint (includes golangci-lint and govulncheck)
   lint:
     name: Lint
-    runs-on: ubuntu-latest
+    runs-on: macos-latest
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -36,7 +36,7 @@ jobs:
   # Code formatting check
   format:
     name: Format
-    runs-on: ubuntu-latest
+    runs-on: macos-latest
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -65,7 +65,7 @@ jobs:
   # Dependency check
   dependencies:
     name: Dependencies
-    runs-on: ubuntu-latest
+    runs-on: macos-latest
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -89,7 +89,7 @@ jobs:
   # Test coverage
   coverage:
     name: Coverage
-    runs-on: ubuntu-latest
+    runs-on: macos-latest
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -103,7 +103,7 @@ jobs:
       - name: Download dependencies
         run: go mod download
 
-      - name: Run tests with coverage
+      - name: Run tests with coverage (unit tests only)
         env:
           SKIP_KEYCHAIN_TESTS: 1
           SKIP_CERTSTORE_TESTS: 1

@@ -2,30 +2,43 @@
 
 This directory contains CI/CD workflows for the caddy-certstore project.
 
+## Important Note
+
+**Default Runner: macOS**
+
+The `tailscale/certstore` library does not support Linux. All workflows use **macOS** as the default runner for unit tests, linting, and quality checks.
+
+**Supported Platforms:**
+- ✅ macOS (Darwin) - Full support
+- ✅ Windows - Full support
+- ❌ Linux - Not supported by certstore library
+
 ## Workflows
 
 ### 🧪 test.yml - Comprehensive Testing
 **Triggers:** Push to main/master/develop, Pull Requests, Manual
 
-Tests the module across multiple platforms using Go version from `.go-version`:
+Tests the module across supported platforms using Go version from `.go-version`:
 
-- **Linux (Ubuntu)**: Unit tests only
-- **macOS**: Full integration tests with Keychain
-- **Windows**: Full integration tests with Certificate Store
+- **macOS (Unit)**: Unit tests only (SKIP_KEYCHAIN_TESTS=1)
+- **macOS (Integration)**: Full integration tests with Keychain
+- **Windows (Integration)**: Full integration tests with Certificate Store
 
 **Coverage**: Results uploaded to Codecov with platform-specific flags.
+
+**Note**: No Linux runner since certstore library doesn't support Linux.
 
 ### 🔍 pr.yml - Pull Request Checks
 **Triggers:** Pull Request events (opened, synchronize, reopened)
 
 Fast validation for pull requests with 4 jobs:
 
-- **Quick Test**: Unit tests on Linux
-- **Code Quality**: Runs `make lint` and `make format` checks
+- **Quick Test**: Unit tests on macOS (fastest feedback)
+- **Code Quality**: Runs `make lint` and `make format` checks on macOS
 - **macOS Integration**: Full integration tests
 - **Windows Integration**: Full integration tests
 
-**All quality checks run on every PR** to catch issues early.
+**All checks use macOS or Windows** - no Linux runners.
 
 ### 📦 release.yml - Release Automation
 **Triggers:** Git tags (v*), Manual
@@ -43,7 +56,7 @@ Handles the release process:
 ### ✨ quality.yml - Code Quality
 **Triggers:** Push to main/master/develop, Pull Requests, Weekly schedule
 
-Comprehensive code quality checks:
+Comprehensive code quality checks (all on **macOS**):
 
 - **Lint**: Runs `make lint` (includes golangci-lint and govulncheck)
 - **Format**: Runs `make format` and checks for uncommitted changes
@@ -68,6 +81,18 @@ All workflows use the Go version specified in `.go-version`:
 
 This ensures consistency across all CI/CD environments and matches local development.
 
+### 🍎 macOS as Default Runner
+
+Since `tailscale/certstore` doesn't support Linux, all default operations run on macOS:
+
+```yaml
+jobs:
+  quick-test:
+    runs-on: macos-latest  # Not ubuntu-latest
+```
+
+**Cost Consideration**: macOS runners have a 10x multiplier on GitHub Actions minutes compared to Linux. However, this is necessary for the project to function.
+
 ### 🔧 Makefile Integration
 
 Workflows use Makefile commands for consistency:
@@ -87,20 +112,21 @@ go mod download -modfile=tools.mod
 
 PRs trigger **4 parallel jobs**:
 
-1. ✅ **Quick Test** (Linux) - Unit tests (~2 min)
-2. ✅ **Code Quality** - Linting + Formatting checks (~3 min)
-3. ✅ **macOS Integration** - Full integration tests (~5 min)
-4. ✅ **Windows Integration** - Full integration tests (~6 min)
+1. ✅ **Quick Test** (macOS) - Unit tests (~3 min)
+2. ✅ **Code Quality** (macOS) - Linting + Formatting checks (~4 min)
+3. ✅ **macOS Integration** - Full integration tests (~6 min)
+4. ✅ **Windows Integration** - Full integration tests (~7 min)
 
-**Total PR validation time: ~6 minutes** (parallel execution)
+**Total PR validation time: ~7 minutes** (parallel execution)
 
 ### 📊 Platform Support
 
-| Platform | Test Type | Store Type | Duration |
-|----------|-----------|------------|----------|
-| Linux    | Unit      | N/A        | ~2 min   |
-| macOS    | Integration | Keychain | ~5 min   |
-| Windows  | Integration | CertStore | ~6 min   |
+| Platform | Runner | Test Type | Store Type | Duration |
+|----------|--------|-----------|------------|----------|
+| macOS    | macos-latest | Unit | N/A | ~3 min |
+| macOS    | macos-latest | Integration | Keychain | ~6 min |
+| Windows  | windows-latest | Integration | CertStore | ~7 min |
+| Linux    | ❌ Not supported | - | - | - |
 
 ## Workflow Status Badges
 
@@ -134,7 +160,7 @@ Workflows use these environment variables to control test execution:
 - **`SKIP_KEYCHAIN_TESTS=1`**: Skip macOS keychain integration tests
 - **`SKIP_CERTSTORE_TESTS=1`**: Skip Windows certificate store integration tests
 
-Both are set on Linux to run unit tests only.
+Both are set on unit test jobs to test the code without certificate store access.
 
 ## Local Testing
 
@@ -144,14 +170,22 @@ Test workflows locally using [act](https://github.com/nektos/act):
 # Install act
 brew install act  # macOS
 
-# Run PR workflow
-act pull_request
+# Note: act uses Linux containers by default, which won't work
+# You need to use --platform flag or test manually
+```
 
-# Run specific job
-act -j quick-test
+**Better approach**: Test manually with the same commands:
 
-# Run with secrets
-act -s CODECOV_TOKEN=your-token
+```bash
+# What CI runs for unit tests
+SKIP_KEYCHAIN_TESTS=1 SKIP_CERTSTORE_TESTS=1 go test -v -race ./...
+
+# What CI runs for quality
+make lint
+make format
+
+# What CI runs for integration
+go test -v -race ./...
 ```
 
 ## Makefile Commands
@@ -177,7 +211,9 @@ Runs all tests:
 
 Update `.go-version` file:
 ```bash
-echo "1.25.3" > .go-version
+echo "1.25.4" > .go-version
+git add .go-version
+git commit -m "Update Go to 1.25.4"
 ```
 
 All workflows will automatically use this version.
@@ -192,6 +228,24 @@ if (( $(echo "$COVERAGE < 30.0" | bc -l) )); then
 ### Modifying Linter Settings
 
 Edit `.golangci.yml` in the repository root, or update the `make lint` target in `Makefile`.
+
+## Cost Considerations
+
+### GitHub Actions Minutes
+
+**macOS runners cost 10x Linux runners**:
+- Linux: 1 minute = 1 minute
+- macOS: 1 minute = 10 minutes (10x multiplier)
+- Windows: 1 minute = 2 minutes (2x multiplier)
+
+**Typical PR cost**:
+- Quick Test (macOS): 3 min × 10 = 30 billable minutes
+- Quality (macOS): 4 min × 10 = 40 billable minutes
+- macOS Integration: 6 min × 10 = 60 billable minutes
+- Windows Integration: 7 min × 2 = 14 billable minutes
+- **Total**: ~144 billable minutes per PR
+
+**Why macOS?**: Required because certstore library doesn't support Linux. No alternative.
 
 ## Troubleshooting
 
@@ -225,12 +279,9 @@ git add .
 git commit -m "Fix formatting"
 ```
 
-### Tools Not Found
+### "certstore not supported on linux" Error
 
-Ensure `tools.mod` dependencies are downloaded:
-```bash
-go mod download -modfile=tools.mod
-```
+This is expected! The certstore library doesn't support Linux. Make sure you're using macOS or Windows runners.
 
 ## Workflow Execution Flow
 
@@ -238,8 +289,8 @@ go mod download -modfile=tools.mod
 ```
 PR Opened/Updated
        │
-       ├─→ Quick Test (Linux)
-       ├─→ Code Quality (Lint + Format)
+       ├─→ Quick Test (macOS)
+       ├─→ Code Quality (macOS)
        ├─→ macOS Integration
        └─→ Windows Integration
               │
@@ -250,8 +301,8 @@ PR Opened/Updated
 ```
 Tag Pushed (v*.*.*)
        │
-       ├─→ Run Full Tests
-       ├─→ Run Quality Checks
+       ├─→ Run Full Tests (macOS + Windows)
+       ├─→ Run Quality Checks (macOS)
        │        │
        │        └─→ All Pass?
        │                │
@@ -264,26 +315,35 @@ Tag Pushed (v*.*.*)
 
 **Average Execution Times** (with cache):
 
-- Quick Test: 2 minutes
-- Code Quality: 3 minutes
-- macOS Integration: 5 minutes
-- Windows Integration: 6 minutes
-- **Complete PR**: 6 minutes (parallel)
+- Quick Test (macOS): 3 minutes
+- Code Quality (macOS): 4 minutes
+- macOS Integration: 6 minutes
+- Windows Integration: 7 minutes
+- **Complete PR**: 7 minutes (parallel)
+
+**Billable Minutes** (with GitHub Actions multipliers):
+- Quick Test: 30 minutes (3 × 10)
+- Quality: 40 minutes (4 × 10)
+- macOS Integration: 60 minutes (6 × 10)
+- Windows Integration: 14 minutes (7 × 2)
+- **Total per PR**: ~144 billable minutes
 
 ## Contributing
 
 When modifying workflows:
 
-1. Test locally with `act` if possible
-2. Use meaningful job and step names
-3. Leverage Makefile commands for consistency
-4. Add comments for complex steps
-5. Set appropriate timeouts
-6. Handle failures gracefully
+1. Remember that Linux is not supported
+2. Use macOS for all default operations
+3. Test manually with the same commands CI uses
+4. Use meaningful job and step names
+5. Leverage Makefile commands for consistency
+6. Add comments for complex steps
+7. Set appropriate timeouts
+8. Handle failures gracefully
 
 ## Resources
 
 - [GitHub Actions Documentation](https://docs.github.com/en/actions)
 - [Go Actions Setup](https://github.com/actions/setup-go)
 - [Codecov Action](https://github.com/codecov/codecov-action)
-- [act - Local Testing](https://github.com/nektos/act)
+- [GitHub Actions Pricing](https://docs.github.com/en/billing/managing-billing-for-github-actions/about-billing-for-github-actions)

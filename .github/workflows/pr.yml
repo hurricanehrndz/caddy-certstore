@@ -5,10 +5,10 @@ on:
     types: [opened, synchronize, reopened]
 
 jobs:
-  # Quick validation on Linux
+  # Quick validation on macOS (certstore doesn't support Linux)
   quick-test:
     name: Quick Test
-    runs-on: ubuntu-latest
+    runs-on: macos-latest
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -37,7 +37,7 @@ jobs:
   # Code quality checks
   quality:
     name: Code Quality
-    runs-on: ubuntu-latest
+    runs-on: macos-latest
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
