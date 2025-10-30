@@ -47,7 +47,7 @@ The module uses the ID `tls.certificates.load_certstore` and can be configured i
 - **`name`**: Common name of the certificate to load (e.g., "example.com")
 - **`issuer`**: Issuer name to match certificates against
 - **`location`**: Certificate store location
-  - macOS: `"system"` or `"user"` (Keychain)
+  - macOS: `"system"` or `"user"`, has no real implication on macOS (Keychain)
   - Windows: `"machine"` or `"user"` (Certificate Store)
 - **`tags`**: Optional tags for certificate organization
 
@@ -71,7 +71,7 @@ Comprehensive test suite covering unit tests and platform-specific integration t
 go test -v ./...
 
 # Run unit tests only (any platform)
-SKIP_KEYCHAIN_TESTS=1 go test -v ./...  # macOS/Linux
+SKIP_KEYCHAIN_TESTS=1 go test -v ./...  # macOS
 $env:SKIP_CERTSTORE_TESTS=1; go test -v ./...  # Windows
 ```
 

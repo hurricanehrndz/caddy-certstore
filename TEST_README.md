@@ -227,13 +227,6 @@ For CI environments (GitHub Actions, etc.):
     go test -v ./...
 ```
 
-### Linux Runners
-
-```yaml
-- name: Run Tests
-  run: |
-    # Only unit tests on Linux (no certificate store integration)
-    SKIP_KEYCHAIN_TESTS=1 SKIP_CERTSTORE_TESTS=1 go test -v ./...
 ```
 
 ## Contributing
