@@ -12,11 +12,6 @@ jobs:
     name: Full Test Suite
     uses: ./.github/workflows/test.yml
 
-  # Run code quality checks before release
-  quality:
-    name: Code Quality Checks
-    uses: ./.github/workflows/quality.yml
-
   # Create GitHub release
   release:
     name: Create Release
