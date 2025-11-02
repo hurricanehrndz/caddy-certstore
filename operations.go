@@ -1,4 +1,4 @@
-package caddycertstore
+package certstore
 
 import (
 	"crypto/tls"

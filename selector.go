@@ -1,4 +1,4 @@
-package caddycertstore
+package certstore
 
 import (
 	"crypto/tls"
@@ -8,8 +8,8 @@ import (
 	"github.com/tailscale/certstore"
 )
 
-// Matcher specifies criteria for matching a certificate from the store.
-type Matcher struct {
+// CertSelector specifies criteria for selecting a certificate from the store.
+type CertSelector struct {
 	// Name is the common name or regex pattern of the certificate to load.
 	// If the value is a valid regex pattern (contains regex metacharacters),
 	// it will be compiled and used for pattern matching. Otherwise, exact
@@ -28,22 +28,22 @@ type Matcher struct {
 }
 
 // cleanup closes the identity and store resources and resets internal state.
-func (m *Matcher) cleanup() {
-	if m.identity != nil {
-		m.identity.Close()
-		m.identity = nil
+func (cs *CertSelector) cleanup() {
+	if cs.identity != nil {
+		cs.identity.Close()
+		cs.identity = nil
 	}
-	if m.store != nil {
-		m.store.Close()
-		m.store = nil
+	if cs.store != nil {
+		cs.store.Close()
+		cs.store = nil
 	}
 }
 
-// getCertificate loads a certificate from the store matching the configured name/pattern.
-func (m *Matcher) getCertificate() (tls.Certificate, error) {
+// loadCertificate loads a certificate from the store matching the configured name/pattern.
+func (cs *CertSelector) loadCertificate() (tls.Certificate, error) {
 	var cert tls.Certificate
 
-	storeLocation := getStoreLocation(m.Location)
+	storeLocation := getStoreLocation(cs.Location)
 
 	store, err := certstore.Open(storeLocation, certstore.ReadOnly)
 	if err != nil {
@@ -56,10 +56,10 @@ func (m *Matcher) getCertificate() (tls.Certificate, error) {
 		return cert, err
 	}
 
-	identity, err := findMatchingIdentity(identities, m.Name, m.pattern)
+	identity, err := findMatchingIdentity(identities, cs.Name, cs.pattern)
 	if err != nil {
 		store.Close()
-		return cert, fmt.Errorf("%w in %s store", err, m.Location)
+		return cert, fmt.Errorf("%w in %s store", err, cs.Location)
 	}
 
 	cert, err = buildTLSCertificate(identity)
@@ -69,8 +69,8 @@ func (m *Matcher) getCertificate() (tls.Certificate, error) {
 		return cert, err
 	}
 
-	m.store = store
-	m.identity = identity
+	cs.store = store
+	cs.identity = identity
 
 	return cert, nil
 }

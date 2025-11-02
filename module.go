@@ -1,4 +1,7 @@
-package caddycertstore
+// Package certstore provides a Caddy v2 HTTP transport module that enables
+// client certificate authentication using certificates from OS certificate stores
+// (macOS Keychain and Windows Certificate Store) for mTLS connections to upstream servers.
+package certstore
 
 import (
 	"crypto/tls"
@@ -21,9 +24,9 @@ type HTTPTransport struct {
 	// Embed the standard HTTP transport
 	*reverseproxy.HTTPTransport
 
-	// ClientCertificateMatcher specifies the criteria for selecting a client
+	// ClientCert specifies the criteria for selecting a client
 	// certificate from the OS certificate store for mTLS authentication.
-	ClientCertificateMatcher *Matcher `json:"client_certificate_match,omitempty"`
+	ClientCert *CertSelector `json:"client_certificate,omitempty"`
 }
 
 // CaddyModule returns the Caddy module information.
@@ -43,28 +46,28 @@ func (h *HTTPTransport) Provision(ctx caddy.Context) error {
 		return err
 	}
 
-	if h.ClientCertificateMatcher == nil {
+	if h.ClientCert == nil {
 		return nil
 	}
 
 	// Validate that Name is set
-	if h.ClientCertificateMatcher.Name == "" {
-		return fmt.Errorf("client_certificate_match must set 'name' property")
+	if h.ClientCert.Name == "" {
+		return fmt.Errorf("client_certificate must set 'name' property")
 	}
 
 	// Compile regex pattern if Name looks like a regex
-	certNameOrPattern := h.ClientCertificateMatcher.Name
-	if isRegexPattern(h.ClientCertificateMatcher.Name) {
+	certNameOrPattern := h.ClientCert.Name
+	if isRegexPattern(h.ClientCert.Name) {
 		var err error
-		h.ClientCertificateMatcher.pattern, err = regexp.Compile(certNameOrPattern)
+		h.ClientCert.pattern, err = regexp.Compile(certNameOrPattern)
 		if err != nil {
 			return fmt.Errorf("invalid regex pattern '%s': %w", certNameOrPattern, err)
 		}
 	}
 
-	clientCert, err := h.ClientCertificateMatcher.getCertificate()
+	clientCert, err := h.ClientCert.loadCertificate()
 	if err != nil {
-		return fmt.Errorf("no client certificate found in: %s with common name: %s", h.ClientCertificateMatcher.Location, h.ClientCertificateMatcher.Name)
+		return fmt.Errorf("no client certificate found in: %s with common name: %s", h.ClientCert.Location, h.ClientCert.Name)
 	}
 
 	if h.Transport.TLSClientConfig == nil {
@@ -78,8 +81,8 @@ func (h *HTTPTransport) Provision(ctx caddy.Context) error {
 // Cleanup implements caddy.CleanerUpper. It closes any idle connections
 // and frees resources allocated from accessing the certificate store.
 func (h *HTTPTransport) Cleanup() error {
-	if h.ClientCertificateMatcher != nil {
-		defer h.ClientCertificateMatcher.cleanup()
+	if h.ClientCert != nil {
+		defer h.ClientCert.cleanup()
 	}
 
 	err := h.HTTPTransport.Cleanup()
