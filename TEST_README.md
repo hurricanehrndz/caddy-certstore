@@ -4,18 +4,20 @@ This document explains how to run the comprehensive test suite for the caddy-cer
 
 ## Test Overview
 
-The test suite is split into three files:
+The test suite is organized across three files:
 
-- **`module_test.go`**: Platform-agnostic unit tests that run on any OS
-- **`module_darwin_test.go`**: macOS-specific integration tests using Keychain
-- **`module_windows_test.go`**: Windows-specific integration tests using Certificate Store
+- **`module_test.go`**: Shared unit and integration tests (run on all platforms via build tags)
+- **`module_darwin_test.go`**: macOS-specific test helpers for certificate import/removal
+- **`module_windows_test.go`**: Windows-specific test helpers for certificate import/removal
 
 Test types include:
 
 - **Unit Tests**: Test individual functions and components (platform-agnostic)
-- **Integration Tests**: Test actual certificate loading from OS certificate stores (Darwin/Windows)
+- **Integration Tests**: Test actual certificate loading from OS certificate stores
 - **HTTP Transport Tests**: Test Caddy's reverse proxy transport provisioning
 - **Certificate Selector Tests**: Test certificate matching and loading logic
+
+Tests are automatically filtered by platform using build tags; platform-specific files contain only helper functions.
 
 ## Prerequisites
 
@@ -45,12 +47,8 @@ Integration tests require:
 ### Run All Unit Tests (Platform-Agnostic)
 
 ```bash
-# Run unit tests only (skips integration tests)
-# On Unix/macOS:
-SKIP_KEYCHAIN_TESTS=1 go test -v ./...
-
-# On Windows (PowerShell):
-$env:SKIP_CERTSTORE_TESTS=1; go test -v ./...
+# Run unit tests only
+go test -v -run TestIsRegexPattern ./...
 ```
 
 ### Run All Tests Including Integration
@@ -73,10 +71,10 @@ go test -v ./...
 
 ```bash
 # Run only HTTPTransport provision tests
-SKIP_KEYCHAIN_TESTS=1 go test -v -run TestHTTPTransport_Provision
+go test -v -run TestHTTPTransport_Provision
 
 # Run only CertSelector tests
-SKIP_KEYCHAIN_TESTS=1 go test -v -run TestCertSelector
+go test -v -run TestCertSelector
 
 # Run only regex pattern tests
 go test -v -run TestIsRegexPattern
@@ -93,31 +91,24 @@ These tests are platform-agnostic and don't require certificate store access:
   - Validates that regex metacharacters are properly detected
   - Tests various regex patterns (wildcards, anchors, groups, etc.)
 
-### Integration Tests (module_darwin_test.go - macOS)
+### Integration Tests (module_test.go)
 
-These tests are macOS-specific and use pre-generated test certificates:
+These tests use pre-generated test certificates and run on their respective platforms via build tags:
 
-- `TestHTTPTransport_Provision_Darwin`: Tests provisioning of HTTPTransport with client certificates
+- `TestHTTPTransport_Provision`: Tests provisioning of HTTPTransport with client certificates
   - Tests exact certificate name matching
   - Tests regex pattern matching
   - Tests error handling for non-existent certificates
   - Tests provisioning without client cert (should succeed)
   - Tests validation of empty certificate name (should fail)
-  
-- `TestCertSelector_LoadCertificate_Darwin`: Tests certificate loading logic
+
+- `TestCertSelector_LoadCertificate`: Tests certificate loading logic
   - Tests loading by exact common name
   - Tests loading by regex pattern
   - Tests error handling for non-existent certificates
   
-- `TestSerializeCertificateChain_Darwin`: Tests certificate chain serialization with real certificates
+- `TestSerializeCertificateChain`: Tests certificate chain serialization with real certificates
 
-### Integration Tests (module_windows_test.go - Windows)
-
-These tests are Windows-specific and mirror the Darwin tests:
-
-- `TestHTTPTransport_Provision_Windows`: Same test coverage as Darwin version for Windows Certificate Store
-- `TestCertSelector_LoadCertificate_Windows`: Same test coverage as Darwin version for Windows Certificate Store  
-- `TestSerializeCertificateChain_Windows`: Tests certificate chain serialization on Windows
 
 ### How Integration Tests Work
 
@@ -154,34 +145,27 @@ These tests are Windows-specific and mirror the Darwin tests:
 
 ### Platform-Specific Build Tags
 
-- **`module_darwin_test.go`**: Uses `//go:build darwin` to only compile on macOS
-- **`module_windows_test.go`**: Uses `//go:build windows` to only compile on Windows
-- **`module_test.go`**: No build tag, runs on all platforms
+- **`module_darwin_test.go`**: Uses `//go:build darwin` for macOS helper functions
+- **`module_windows_test.go`**: Uses `//go:build windows` for Windows helper functions
+- **`module_test.go`**: Contains shared tests that use platform-specific helpers via build tags
 
-This ensures that CI/CD pipelines on different platforms only run the tests relevant to that platform.
+Build tags automatically ensure tests only run on supported platforms. Integration tests in `module_test.go` call platform-specific helpers that are only compiled on their respective platforms.
 
-## Environment Variables
+## Platform Filtering
 
-- **`SKIP_KEYCHAIN_TESTS`** (macOS): Set to skip keychain integration tests
-  ```bash
-  SKIP_KEYCHAIN_TESTS=1 go test -v ./...
-  ```
+Tests automatically run only on supported platforms via build tags. No environment variables are needed to skip platform-specific tests - they simply won't compile on unsupported platforms.
 
-- **`SKIP_CERTSTORE_TESTS`** (Windows): Set to skip certificate store integration tests
-  ```powershell
-  $env:SKIP_CERTSTORE_TESTS=1; go test -v ./...
-  ```
+To run only unit tests without integration tests, use test name filters:
+```bash
+go test -v -run TestIsRegexPattern
+```
 
 ## Test Coverage
 
 Generate a coverage report:
 
 ```bash
-# Unit tests only
-SKIP_KEYCHAIN_TESTS=1 go test -coverprofile=coverage.out ./...
-go tool cover -html=coverage.out
-
-# With integration tests (macOS)
+# All tests (includes integration on macOS/Windows)
 go test -coverprofile=coverage.out ./...
 go tool cover -html=coverage.out
 ```
@@ -212,11 +196,9 @@ For CI environments (GitHub Actions, etc.):
 
 ```yaml
 - name: Run Unit Tests
-  env:
-    SKIP_KEYCHAIN_TESTS: 1
   run: |
     go mod download
-    go test -v ./...
+    go test -v -run TestIsRegexPattern ./...
 ```
 
 ## What Tests Validate
@@ -251,20 +233,20 @@ For CI environments (GitHub Actions, etc.):
 
 ```bash
 # Test exact name matching
-go test -v -run TestCertSelector_LoadCertificate_Darwin/load_by_exact_common_name
+go test -v -run TestCertSelector_LoadCertificate/load_by_exact_common_name
 
 # Test regex pattern matching  
-go test -v -run TestCertSelector_LoadCertificate_Darwin/load_by_regex_pattern
+go test -v -run TestCertSelector_LoadCertificate/load_by_regex_pattern
 ```
 
 ### Testing Error Conditions
 
 ```bash
 # Test non-existent certificate
-go test -v -run TestHTTPTransport_Provision_Darwin/provision_with_non-existent_certificate
+go test -v -run TestHTTPTransport_Provision/provision_with_non-existent_certificate
 
 # Test empty name validation
-go test -v -run TestHTTPTransport_Provision_Darwin/provision_with_empty_name
+go test -v -run TestHTTPTransport_Provision/provision_with_empty_name
 ```
 
 ## Troubleshooting Tests
@@ -291,15 +273,13 @@ Ensure:
 
 When adding new tests:
 
-1. Follow the existing test patterns
-2. Use `t.Helper()` for test helper functions
-3. Clean up resources in defer statements or cleanup functions
-4. Skip integration tests appropriately:
-   - macOS: Check `SKIP_KEYCHAIN_TESTS` env var
-   - Windows: Check `SKIP_CERTSTORE_TESTS` env var
-5. Use platform-specific build tags (`//go:build darwin` or `//go:build windows`)
-6. Document any new test requirements or scenarios
-7. Ensure tests are idempotent and can run multiple times
+1. Add shared tests to `module_test.go` (they will automatically run on supported platforms)
+2. Add platform-specific helpers to `module_darwin_test.go` or `module_windows_test.go` with appropriate build tags
+3. Use `t.Helper()` for test helper functions
+4. Clean up resources in defer statements or cleanup functions
+5. Document any new test requirements or scenarios
+6. Ensure tests are idempotent and can run multiple times
+7. Follow existing test patterns for consistency
 
 ## Questions?
 
