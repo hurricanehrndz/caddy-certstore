@@ -23,45 +23,33 @@ type CertSelector struct {
 	Location string `json:"location,omitempty"`
 
 	// runtime resources kept for cleanup (unexported, not serialized)
-	store    certstore.Store
-	identity certstore.Identity
+	cacheKey string
 	pattern  *regexp.Regexp
 	logger   *zap.Logger
 }
 
-// cleanup closes the identity and store resources and resets internal state.
-func (cs *CertSelector) cleanup() {
-	if cs.identity != nil {
-		cs.identity.Close()
-		cs.identity = nil
-	}
-	if cs.store != nil {
-		cs.store.Close()
-		cs.store = nil
-	}
-}
-
-// loadCertificate loads a certificate from the store matching the configured name/pattern.
-func (cs *CertSelector) loadCertificate() (tls.Certificate, error) {
+// loadCertificateWithResources loads a certificate from the store and returns
+// the certificate along with the store and identity handles for resource management.
+func (cs *CertSelector) loadCertificateWithResources() (tls.Certificate, certstore.Store, certstore.Identity, error) {
 	var cert tls.Certificate
 
 	storeLocation := getStoreLocation(cs.Location)
 
 	store, err := certstore.Open(storeLocation, certstore.ReadOnly)
 	if err != nil {
-		return cert, err
+		return cert, nil, nil, err
 	}
 
 	identities, err := store.Identities()
 	if err != nil {
 		store.Close()
-		return cert, err
+		return cert, nil, nil, err
 	}
 
 	identity, err := findMatchingIdentity(identities, cs.Name, cs.pattern)
 	if err != nil {
 		store.Close()
-		return cert, fmt.Errorf("%w in %s store", err, cs.Location)
+		return cert, nil, nil, fmt.Errorf("%w in %s store", err, cs.Location)
 	}
 
 	// Log the certificate details if logger is available
@@ -85,11 +73,20 @@ func (cs *CertSelector) loadCertificate() (tls.Certificate, error) {
 	if err != nil {
 		identity.Close()
 		store.Close()
+		return cert, nil, nil, err
+	}
+
+	return cert, store, identity, nil
+}
+
+// loadCertificate loads a certificate from the store matching the configured name/pattern.
+// This is kept for backward compatibility but internally uses the cached version.
+func (cs *CertSelector) loadCertificate() (tls.Certificate, error) {
+	cert, cacheKey, err := cs.getCachedCertificate()
+	if err != nil {
 		return cert, err
 	}
 
-	cs.store = store
-	cs.identity = identity
-
+	cs.cacheKey = cacheKey
 	return cert, nil
 }

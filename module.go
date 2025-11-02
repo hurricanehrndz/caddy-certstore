@@ -69,6 +69,7 @@ func (h *HTTPTransport) Provision(ctx caddy.Context) error {
 		}
 	}
 
+	// Load certificate from cache (or load and cache it)
 	clientCert, err := h.ClientCert.loadCertificate()
 	if err != nil {
 		return fmt.Errorf("no client certificate found in: %s with common name: %s", h.ClientCert.Location, h.ClientCert.Name)
@@ -83,10 +84,11 @@ func (h *HTTPTransport) Provision(ctx caddy.Context) error {
 }
 
 // Cleanup implements caddy.CleanerUpper. It closes any idle connections
-// and frees resources allocated from accessing the certificate store.
+// and decrements the reference count for the cached certificate. When the
+// reference count reaches zero, the certificate's OS resources are freed.
 func (h *HTTPTransport) Cleanup() error {
-	if h.ClientCert != nil {
-		defer h.ClientCert.cleanup()
+	if h.ClientCert != nil && h.ClientCert.cacheKey != "" {
+		releaseCachedCertificate(h.ClientCert.cacheKey)
 	}
 
 	err := h.HTTPTransport.Cleanup()

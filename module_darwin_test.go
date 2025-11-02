@@ -24,8 +24,8 @@ const (
 	testCertPass = "test123"
 )
 
-// importCertificateToKeychain imports the test certificate from testdata into login keychain
-func importCertificateToKeychain(t *testing.T) {
+// importTestCertificate imports the test certificate from testdata into login keychain
+func importTestCertificate(t *testing.T) {
 	t.Helper()
 
 	if os.Getenv("SKIP_KEYCHAIN_TESTS") != "" {
@@ -67,8 +67,8 @@ func importCertificateToKeychain(t *testing.T) {
 	t.Logf("Successfully imported certificate to keychain: %s", testCertCN)
 }
 
-// removeCertificateFromKeychain removes the test certificate from login keychain
-func removeCertificateFromKeychain(t *testing.T) {
+// removeTestCertificate removes the test certificate from login keychain
+func removeTestCertificate(t *testing.T) {
 	t.Helper()
 
 	cmd := exec.Command("security", "delete-certificate",
@@ -84,8 +84,8 @@ func TestHTTPTransport_Provision_Darwin(t *testing.T) {
 		t.Skip("Skipping keychain integration test (SKIP_KEYCHAIN_TESTS set)")
 	}
 
-	importCertificateToKeychain(t)
-	defer removeCertificateFromKeychain(t)
+	importTestCertificate(t)
+	defer removeTestCertificate(t)
 
 	tests := []struct {
 		name        string
@@ -207,8 +207,8 @@ func TestCertSelector_LoadCertificate_Darwin(t *testing.T) {
 		t.Skip("Skipping keychain test (SKIP_KEYCHAIN_TESTS set)")
 	}
 
-	importCertificateToKeychain(t)
-	defer removeCertificateFromKeychain(t)
+	importTestCertificate(t)
+	defer removeTestCertificate(t)
 
 	tests := []struct {
 		name        string
@@ -277,7 +277,9 @@ func TestCertSelector_LoadCertificate_Darwin(t *testing.T) {
 			}
 
 			// Cleanup
-			tt.selector.cleanup()
+			if tt.selector.cacheKey != "" {
+				releaseCachedCertificate(tt.selector.cacheKey)
+			}
 		})
 	}
 }

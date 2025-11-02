@@ -24,8 +24,8 @@ const (
 	testCertPass = "test123"
 )
 
-// importCertificateToStore imports the test certificate from testdata into user certificate store
-func importCertificateToStore(t *testing.T) {
+// importTestCertificate imports the test certificate from testdata into user certificate store
+func importTestCertificate(t *testing.T) {
 	t.Helper()
 
 	if os.Getenv("SKIP_CERTSTORE_TESTS") != "" {
@@ -65,8 +65,8 @@ func importCertificateToStore(t *testing.T) {
 	t.Logf("Certificate import result: %s", output)
 }
 
-// removeCertificateFromStore removes the test certificate from user certificate store
-func removeCertificateFromStore(t *testing.T) {
+// removeTestCertificate removes the test certificate from user certificate store
+func removeTestCertificate(t *testing.T) {
 	t.Helper()
 
 	psScript := `
@@ -86,8 +86,8 @@ func TestHTTPTransport_Provision_Windows(t *testing.T) {
 		t.Skip("Skipping certificate store integration test (SKIP_CERTSTORE_TESTS set)")
 	}
 
-	importCertificateToStore(t)
-	defer removeCertificateFromStore(t)
+	importTestCertificate(t)
+	defer removeTestCertificate(t)
 
 	tests := []struct {
 		name        string
@@ -208,8 +208,8 @@ func TestCertSelector_LoadCertificate_Windows(t *testing.T) {
 		t.Skip("Skipping certificate store test (SKIP_CERTSTORE_TESTS set)")
 	}
 
-	importCertificateToStore(t)
-	defer removeCertificateFromStore(t)
+	importTestCertificate(t)
+	defer removeTestCertificate(t)
 
 	tests := []struct {
 		name        string
@@ -277,7 +277,9 @@ func TestCertSelector_LoadCertificate_Windows(t *testing.T) {
 				}
 			}
 
-			tt.selector.cleanup()
+			if tt.selector.cacheKey != "" {
+				releaseCachedCertificate(tt.selector.cacheKey)
+			}
 		})
 	}
 }

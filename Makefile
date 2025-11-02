@@ -15,6 +15,8 @@ test:
 
 caddy: build/darwin/caddy
 build/darwin/caddy:
-		test -f $(@D) || mkdir -p $(@D)
-		@go install github.com/caddyserver/xcaddy/cmd/xcaddy@latest
-		@GOOS=darwin GOARCH=arm64 CGO_ENABLED=1 xcaddy build --output $(@) --with github.com/hurricanehrndz/caddy-certstore@latest
+	test -f $(@D) || mkdir -p $(@D)
+	@go install github.com/caddyserver/xcaddy/cmd/xcaddy@latest
+	CGO_ENABLED=1 xcaddy build \
+		--output $(@) \
+		--with github.com/hurricanehrndz/caddy-certstore=.
