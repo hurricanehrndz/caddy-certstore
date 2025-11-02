@@ -2,7 +2,6 @@ package certstore
 
 import (
 	"crypto/tls"
-	"os"
 	"regexp"
 	"sync"
 	"sync/atomic"
@@ -11,10 +10,6 @@ import (
 )
 
 func TestCertificateCache_ConcurrentAccess(t *testing.T) {
-	if os.Getenv("SKIP_KEYCHAIN_TESTS") != "" {
-		t.Skip("Skipping keychain test (SKIP_KEYCHAIN_TESTS set)")
-	}
-
 	// Import test certificate
 	importTestCertificate(t)
 	defer removeTestCertificate(t)
@@ -108,10 +103,6 @@ func TestCertificateCache_ConcurrentAccess(t *testing.T) {
 }
 
 func TestCertificateCache_RefCounting(t *testing.T) {
-	if os.Getenv("SKIP_KEYCHAIN_TESTS") != "" {
-		t.Skip("Skipping keychain test (SKIP_KEYCHAIN_TESTS set)")
-	}
-
 	// Import test certificate
 	importTestCertificate(t)
 	defer removeTestCertificate(t)

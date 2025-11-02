@@ -155,10 +155,6 @@ tests. See [TEST_README.md](TEST_README.md) for detailed testing instructions.
 ```bash
 # Run all tests (macOS/Windows)
 make test
-
-# Run unit tests only (any platform)
-SKIP_KEYCHAIN_TESTS=1 go test -v ./...  # macOS
-$env:SKIP_CERTSTORE_TESTS=1; go test -v ./...  # Windows
 ```
 
 ## Development
@@ -169,7 +165,7 @@ $env:SKIP_CERTSTORE_TESTS=1; go test -v ./...  # Windows
 
 **Build:**
 ```bash
-go build -v ./...
+make caddy
 ```
 
 **Lint:**
