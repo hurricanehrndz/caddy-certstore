@@ -4,6 +4,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"fmt"
+	"regexp"
 	"strings"
 
 	"github.com/tailscale/certstore"
@@ -21,9 +22,21 @@ func getStoreLocation(location string) certstore.StoreLocation {
 	}
 }
 
-// findMatchingIdentity searches for an identity with the given common name.
+// findMatchingIdentity searches for an identity based on the certificate matcher criteria.
+// If pattern is non-nil, it delegates to regex-based matching; otherwise, it uses exact
+// common name matching. It closes all non-matching identities.
+func findMatchingIdentity(identities []certstore.Identity, commonName string, pattern *regexp.Regexp) (match certstore.Identity, err error) {
+	switch {
+	case pattern != nil:
+		return findMatchingIdentityByPattern(identities, pattern)
+	default:
+		return findMatchingIdentityByCommonName(identities, commonName)
+	}
+}
+
+// findMatchingIdentityByCommonName searches for an identity with the given common name.
 // It closes all non-matching identities and returns the first match, or an error if not found.
-func findMatchingIdentity(identities []certstore.Identity, commonName string) (match certstore.Identity, err error) {
+func findMatchingIdentityByCommonName(identities []certstore.Identity, commonName string) (match certstore.Identity, err error) {
 	for _, tmpID := range identities {
 		certInfo, err := tmpID.Certificate()
 		if err != nil {
@@ -31,7 +44,8 @@ func findMatchingIdentity(identities []certstore.Identity, commonName string) (m
 			continue
 		}
 
-		if certInfo.Subject.CommonName == commonName || strings.Contains(certInfo.Subject.CommonName, commonName) {
+		matched := certInfo.Subject.CommonName == commonName
+		if matched {
 			match = tmpID
 			break
 		}
@@ -41,6 +55,32 @@ func findMatchingIdentity(identities []certstore.Identity, commonName string) (m
 
 	if match == nil {
 		err = fmt.Errorf("no identity found with CN '%s'", commonName)
+	}
+
+	return match, err
+}
+
+// findMatchingIdentityByPattern searches for an identity with the given regex pattern.
+// It closes all non-matching identities and returns the first match, or an error if not found.
+func findMatchingIdentityByPattern(identities []certstore.Identity, pattern *regexp.Regexp) (match certstore.Identity, err error) {
+	for _, tmpID := range identities {
+		certInfo, err := tmpID.Certificate()
+		if err != nil {
+			tmpID.Close()
+			continue
+		}
+
+		matched := pattern.MatchString(certInfo.Subject.CommonName)
+		if matched {
+			match = tmpID
+			break
+		}
+
+		tmpID.Close()
+	}
+
+	if match == nil {
+		err = fmt.Errorf("no identity found matching pattern '%s'", pattern.String())
 	}
 
 	return match, err
