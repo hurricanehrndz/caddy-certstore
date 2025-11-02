@@ -10,7 +10,7 @@ format:
 
 .PHONY: test
 test:
-	go test -v ./...
+	go test -v -race  -covermode=atomic ./...
 
 
 caddy: build/darwin/caddy
@@ -18,4 +18,3 @@ build/darwin/caddy:
 		test -f $(@D) || mkdir -p $(@D)
 		@go install github.com/caddyserver/xcaddy/cmd/xcaddy@latest
 		@GOOS=darwin GOARCH=arm64 CGO_ENABLED=1 xcaddy build --output $(@) --with github.com/hurricanehrndz/caddy-certstore@v0.1.0
-

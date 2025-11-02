@@ -1,27 +1,27 @@
 //go:build windows
 
-package caddycertstore
+package certstore
 
 import (
 	"context"
+	"crypto/tls"
 	"crypto/x509"
 	"encoding/pem"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"slices"
+	"regexp"
 	"testing"
 
 	"github.com/caddyserver/caddy/v2"
-	"github.com/caddyserver/caddy/v2/modules/caddytls"
+	"github.com/caddyserver/caddy/v2/modules/caddyhttp/reverseproxy"
 )
 
 const (
-	testCertCN     = "test.caddycertstore.local"
-	testCertIssuer = "test.caddycertstore.local" // Self-signed, so issuer = subject
-	testCertPFX    = "testdata/test-cert.p12"    // PFX and P12 are the same format
-	testCertPEM    = "testdata/test-cert.pem"
-	testCertPass   = "test123"
+	testCertCN   = "test.caddycertstore.local"
+	testCertPFX  = "testdata/test-cert.p12"
+	testCertPEM  = "testdata/test-cert.pem"
+	testCertPass = "test123"
 )
 
 // importCertificateToStore imports the test certificate from testdata into user certificate store
@@ -32,19 +32,15 @@ func importCertificateToStore(t *testing.T) {
 		t.Skip("Skipping certificate store test (SKIP_CERTSTORE_TESTS set)")
 	}
 
-	// Get absolute path to pfx file
 	pfxPath, err := filepath.Abs(testCertPFX)
 	if err != nil {
 		t.Fatalf("Failed to get absolute path: %v", err)
 	}
 
-	// Check if file exists
 	if _, err := os.Stat(pfxPath); os.IsNotExist(err) {
 		t.Fatalf("Test certificate not found at %s", pfxPath)
 	}
 
-	// PowerShell script to import certificate
-	// Import to CurrentUser\My (Personal) store
 	psScript := `
 		$password = ConvertTo-SecureString -String "` + testCertPass + `" -AsPlainText -Force
 		try {
@@ -73,7 +69,6 @@ func importCertificateToStore(t *testing.T) {
 func removeCertificateFromStore(t *testing.T) {
 	t.Helper()
 
-	// PowerShell script to remove certificate by subject
 	psScript := `
 		$certs = Get-ChildItem -Path Cert:\CurrentUser\My | Where-Object { $_.Subject -like "*` + testCertCN + `*" }
 		foreach ($cert in $certs) {
@@ -83,118 +78,110 @@ func removeCertificateFromStore(t *testing.T) {
 	`
 
 	cmd := exec.Command("powershell", "-NoProfile", "-NonInteractive", "-Command", psScript)
-	// Ignore errors - certificate might not exist
 	_ = cmd.Run()
 }
 
-func TestCertStoreLoader_LoadCertificates_Integration(t *testing.T) {
+func TestHTTPTransport_Provision_Windows(t *testing.T) {
 	if os.Getenv("SKIP_CERTSTORE_TESTS") != "" {
 		t.Skip("Skipping certificate store integration test (SKIP_CERTSTORE_TESTS set)")
 	}
 
-	// Import test certificate
 	importCertificateToStore(t)
 	defer removeCertificateFromStore(t)
 
 	tests := []struct {
 		name        string
-		loader      *CertStoreLoader
+		transport   *HTTPTransport
 		expectError bool
-		validate    func(*testing.T, []caddytls.Certificate)
+		validate    func(*testing.T, *HTTPTransport)
 	}{
 		{
-			name: "load certificate by common name",
-			loader: &CertStoreLoader{
-				Certificates: []*CertificateSelector{
-					{
-						Name:     testCertCN,
-						Location: "user",
-					},
+			name: "provision with exact certificate name",
+			transport: &HTTPTransport{
+				HTTPTransport: &reverseproxy.HTTPTransport{},
+				ClientCert: &CertSelector{
+					Name:     testCertCN,
+					Location: "user",
 				},
 			},
 			expectError: false,
-			validate: func(t *testing.T, certs []caddytls.Certificate) {
-				if len(certs) != 1 {
-					t.Fatalf("Expected 1 certificate, got %d", len(certs))
+			validate: func(t *testing.T, h *HTTPTransport) {
+				if h.Transport.TLSClientConfig == nil {
+					t.Fatal("Expected TLSClientConfig to be set")
 				}
-				if certs[0].Leaf.Subject.CommonName != testCertCN {
-					t.Errorf("Expected CN '%s', got '%s'", testCertCN, certs[0].Leaf.Subject.CommonName)
+				if len(h.Transport.TLSClientConfig.Certificates) != 1 {
+					t.Fatalf("Expected 1 certificate, got %d", len(h.Transport.TLSClientConfig.Certificates))
 				}
-				if certs[0].PrivateKey == nil {
+				cert := h.Transport.TLSClientConfig.Certificates[0]
+				if cert.Leaf == nil {
+					t.Error("Expected certificate Leaf to be set")
+				}
+				if cert.PrivateKey == nil {
 					t.Error("Expected certificate to have private key")
 				}
 			},
 		},
 		{
-			name: "load certificate by issuer (self-signed)",
-			loader: &CertStoreLoader{
-				Certificates: []*CertificateSelector{
-					{
-						Issuer:   testCertIssuer,
-						Location: "user",
-					},
+			name: "provision with regex pattern",
+			transport: &HTTPTransport{
+				HTTPTransport: &reverseproxy.HTTPTransport{},
+				ClientCert: &CertSelector{
+					Name:     "test\\.caddycertstore\\..*",
+					Location: "user",
 				},
 			},
 			expectError: false,
-			validate: func(t *testing.T, certs []caddytls.Certificate) {
-				if len(certs) != 1 {
-					t.Fatalf("Expected 1 certificate, got %d", len(certs))
+			validate: func(t *testing.T, h *HTTPTransport) {
+				if h.Transport.TLSClientConfig == nil {
+					t.Fatal("Expected TLSClientConfig to be set")
 				}
-				if certs[0].Leaf.Issuer.CommonName != testCertIssuer {
-					t.Errorf("Expected Issuer CN '%s', got '%s'", testCertIssuer, certs[0].Leaf.Issuer.CommonName)
+				if len(h.Transport.TLSClientConfig.Certificates) != 1 {
+					t.Fatalf("Expected 1 certificate, got %d", len(h.Transport.TLSClientConfig.Certificates))
 				}
 			},
 		},
 		{
-			name: "load non-existent certificate",
-			loader: &CertStoreLoader{
-				Certificates: []*CertificateSelector{
-					{
-						Name:     "nonexistent.certificate.local",
-						Location: "user",
-					},
+			name: "provision with non-existent certificate",
+			transport: &HTTPTransport{
+				HTTPTransport: &reverseproxy.HTTPTransport{},
+				ClientCert: &CertSelector{
+					Name:     "nonexistent.certificate.local",
+					Location: "user",
 				},
 			},
 			expectError: true,
 		},
 		{
-			name: "load certificate with tags",
-			loader: &CertStoreLoader{
-				Certificates: []*CertificateSelector{
-					{
-						Name:     testCertCN,
-						Location: "user",
-						Tags:     []string{"test", "integration"},
-					},
-				},
+			name: "provision without client cert",
+			transport: &HTTPTransport{
+				HTTPTransport: &reverseproxy.HTTPTransport{},
 			},
 			expectError: false,
-			validate: func(t *testing.T, certs []caddytls.Certificate) {
-				if len(certs) != 1 {
-					t.Fatalf("Expected 1 certificate, got %d", len(certs))
-				}
-				if len(certs[0].Tags) != 2 {
-					t.Errorf("Expected 2 tags, got %d", len(certs[0].Tags))
-				}
-				if !slices.Contains(certs[0].Tags, "test") || !slices.Contains(certs[0].Tags, "integration") {
-					t.Errorf("Expected tags to contain 'test' and 'integration', got %v", certs[0].Tags)
+			validate: func(t *testing.T, h *HTTPTransport) {
+				if h.Transport.TLSClientConfig != nil && len(h.Transport.TLSClientConfig.Certificates) > 0 {
+					t.Error("Expected no certificates when ClientCert is nil")
 				}
 			},
+		},
+		{
+			name: "provision with empty name",
+			transport: &HTTPTransport{
+				HTTPTransport: &reverseproxy.HTTPTransport{},
+				ClientCert: &CertSelector{
+					Name:     "",
+					Location: "user",
+				},
+			},
+			expectError: true,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Provision the loader
 			ctx, cancel := caddy.NewContext(caddy.Context{Context: context.Background()})
 			defer cancel()
 
-			if err := tt.loader.Provision(ctx); err != nil {
-				t.Fatalf("Failed to provision loader: %v", err)
-			}
-
-			// Load certificates
-			certs, err := tt.loader.LoadCertificates()
+			err := tt.transport.Provision(ctx)
 
 			if tt.expectError {
 				if err == nil {
@@ -205,14 +192,92 @@ func TestCertStoreLoader_LoadCertificates_Integration(t *testing.T) {
 					t.Errorf("Unexpected error: %v", err)
 				}
 				if tt.validate != nil {
-					tt.validate(t, certs)
+					tt.validate(t, tt.transport)
 				}
 			}
 
-			// Cleanup
-			if err := tt.loader.Cleanup(); err != nil {
+			if err := tt.transport.Cleanup(); err != nil {
 				t.Errorf("Failed to cleanup: %v", err)
 			}
+		})
+	}
+}
+
+func TestCertSelector_LoadCertificate_Windows(t *testing.T) {
+	if os.Getenv("SKIP_CERTSTORE_TESTS") != "" {
+		t.Skip("Skipping certificate store test (SKIP_CERTSTORE_TESTS set)")
+	}
+
+	importCertificateToStore(t)
+	defer removeCertificateFromStore(t)
+
+	tests := []struct {
+		name        string
+		selector    *CertSelector
+		expectError bool
+		validate    func(*testing.T, tls.Certificate)
+	}{
+		{
+			name: "load by exact common name",
+			selector: &CertSelector{
+				Name:     testCertCN,
+				Location: "user",
+			},
+			expectError: false,
+			validate: func(t *testing.T, cert tls.Certificate) {
+				if cert.Leaf == nil {
+					t.Error("Expected Leaf to be set")
+				}
+				if cert.Leaf.Subject.CommonName != testCertCN {
+					t.Errorf("Expected CN '%s', got '%s'", testCertCN, cert.Leaf.Subject.CommonName)
+				}
+				if cert.PrivateKey == nil {
+					t.Error("Expected private key to be set")
+				}
+			},
+		},
+		{
+			name: "load by regex pattern",
+			selector: &CertSelector{
+				Name:     "test\\..*\\.local",
+				Location: "user",
+				pattern:  regexp.MustCompile("test\\..*\\.local"),
+			},
+			expectError: false,
+			validate: func(t *testing.T, cert tls.Certificate) {
+				if cert.Leaf == nil {
+					t.Error("Expected Leaf to be set")
+				}
+			},
+		},
+		{
+			name: "load non-existent certificate",
+			selector: &CertSelector{
+				Name:     "nonexistent.local",
+				Location: "user",
+			},
+			expectError: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cert, err := tt.selector.loadCertificate()
+
+			if tt.expectError {
+				if err == nil {
+					t.Error("Expected error but got none")
+				}
+			} else {
+				if err != nil {
+					t.Errorf("Unexpected error: %v", err)
+				}
+				if tt.validate != nil {
+					tt.validate(t, cert)
+				}
+			}
+
+			tt.selector.cleanup()
 		})
 	}
 }
@@ -222,7 +287,6 @@ func TestSerializeCertificateChain_Windows(t *testing.T) {
 		t.Skip("Skipping certificate store test (SKIP_CERTSTORE_TESTS set)")
 	}
 
-	// Load the test certificate from testdata
 	pemPath, err := filepath.Abs(testCertPEM)
 	if err != nil {
 		t.Fatalf("Failed to get absolute path: %v", err)
@@ -243,7 +307,6 @@ func TestSerializeCertificateChain_Windows(t *testing.T) {
 		t.Fatalf("Failed to parse certificate: %v", err)
 	}
 
-	// Test serialization
 	chain := []*x509.Certificate{cert}
 	result := serializeCertificateChain(chain)
 
@@ -255,7 +318,6 @@ func TestSerializeCertificateChain_Windows(t *testing.T) {
 		t.Error("Expected non-empty certificate data")
 	}
 
-	// Verify we can parse the serialized certificate
 	parsed, err := x509.ParseCertificate(result[0])
 	if err != nil {
 		t.Errorf("Failed to parse serialized certificate: %v", err)
@@ -263,22 +325,5 @@ func TestSerializeCertificateChain_Windows(t *testing.T) {
 
 	if parsed.Subject.CommonName != cert.Subject.CommonName {
 		t.Errorf("Expected CN '%s', got '%s'", cert.Subject.CommonName, parsed.Subject.CommonName)
-	}
-}
-
-func BenchmarkLoadCertificate_Windows(b *testing.B) {
-	if os.Getenv("SKIP_CERTSTORE_TESTS") != "" {
-		b.Skip("Skipping benchmark (SKIP_CERTSTORE_TESTS set)")
-	}
-
-	// Note: This benchmark assumes the test certificate is already in the certificate store
-	selector := &CertificateSelector{
-		Name:     testCertCN,
-		Location: "user",
-	}
-
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		_, _, _, _ = loadCertificate(selector)
 	}
 }
