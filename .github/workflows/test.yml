@@ -74,6 +74,16 @@ jobs:
         shell: bash
         run: go test -v -race -coverprofile=coverage.txt -covermode=atomic ./...
 
+      - name: Build Caddy with module
+        shell: bash
+        run: |
+          go install github.com/caddyserver/xcaddy/cmd/xcaddy@latest
+          xcaddy build --output ./caddy --with github.com/hurricanehrndz/caddy-certstore=.
+
+      - name: Validate test configuration
+        shell: bash
+        run: ./caddy validate --config testdata/test-config.json
+
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v5
         with:

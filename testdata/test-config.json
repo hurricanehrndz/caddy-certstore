@@ -1,0 +1,73 @@
+{
+  "admin": {
+    "disabled": false,
+    "listen": "127.0.0.1:2019"
+  },
+  "logging": {
+    "logs": {
+      "default": {
+        "level": "DEBUG"
+      }
+    }
+  },
+  "apps": {
+    "http": {
+      "servers": {
+        "yhap": {
+          "listen": [
+            "127.0.0.1:80"
+          ],
+          "routes": [
+            {
+              "match": [
+                {
+                  "host": [
+                    "localhost"
+                  ]
+                }
+              ],
+              "handle": [
+                {
+                  "handler": "reverse_proxy",
+                  "headers": {
+                    "request": {
+                      "set": {
+                        "Host": [
+                          "example.org"
+                        ]
+                      },
+                      "delete": [
+                        "X-Forwarded-Host",
+                        "X-Forwarded-Proto"
+                      ]
+                    }
+                  },
+                  "transport": {
+                    "protocol": "certstore",
+                    "client_certificate": {
+                      "name": "test.caddycertstore.local",
+                      "location": "user"
+                    },
+                    "tls": {
+                      "insecure_skip_verify": false,
+                      "server_name": "example.org"
+                    }
+                  },
+                  "upstreams": [
+                    {
+                      "dial": "example.org:443"
+                    }
+                  ]
+                }
+              ]
+            }
+          ],
+          "automatic_https": {
+            "disable": true
+          }
+        }
+      }
+    }
+  }
+}
+
