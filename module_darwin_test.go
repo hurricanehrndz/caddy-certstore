@@ -1,4 +1,4 @@
-//go:build darwin
+
 
 package caddycertstore
 
@@ -102,7 +102,7 @@ func TestCertStoreLoader_LoadCertificates_Integration(t *testing.T) {
 		{
 			name: "load certificate by common name",
 			loader: &CertStoreLoader{
-				Certificates: []*CertificateSelector{
+				Certificates: []*Matcher{
 					{
 						Name:     testCertCN,
 						Location: "user", // Use user since we imported to login keychain
@@ -125,7 +125,7 @@ func TestCertStoreLoader_LoadCertificates_Integration(t *testing.T) {
 		{
 			name: "load certificate by issuer (self-signed)",
 			loader: &CertStoreLoader{
-				Certificates: []*CertificateSelector{
+				Certificates: []*Matcher{
 					{
 						Issuer:   testCertIssuer,
 						Location: "user",
@@ -145,7 +145,7 @@ func TestCertStoreLoader_LoadCertificates_Integration(t *testing.T) {
 		{
 			name: "load non-existent certificate",
 			loader: &CertStoreLoader{
-				Certificates: []*CertificateSelector{
+				Certificates: []*Matcher{
 					{
 						Name:     "nonexistent.certificate.local",
 						Location: "user",
@@ -157,7 +157,7 @@ func TestCertStoreLoader_LoadCertificates_Integration(t *testing.T) {
 		{
 			name: "load certificate with tags",
 			loader: &CertStoreLoader{
-				Certificates: []*CertificateSelector{
+				Certificates: []*Matcher{
 					{
 						Name:     testCertCN,
 						Location: "user",
@@ -269,7 +269,7 @@ func BenchmarkLoadCertificate_Darwin(b *testing.B) {
 	}
 
 	// Note: This benchmark assumes the test certificate is already in the keychain
-	selector := &CertificateSelector{
+	selector := &Matcher{
 		Name:     testCertCN,
 		Location: "user",
 	}
