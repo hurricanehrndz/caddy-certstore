@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/http"
 	"regexp"
+	"slices"
 
 	"github.com/caddyserver/caddy/v2"
 	"github.com/caddyserver/caddy/v2/modules/caddyhttp/reverseproxy"
@@ -100,10 +101,8 @@ func isRegexPattern(s string) bool {
 	// Check for common regex metacharacters
 	regexChars := []rune{'*', '+', '?', '^', '$', '(', ')', '[', ']', '{', '}', '|', '\\'}
 	for _, r := range s {
-		for _, metachar := range regexChars {
-			if r == metachar {
-				return true
-			}
+		if slices.Contains(regexChars, r) {
+			return true
 		}
 	}
 	return false

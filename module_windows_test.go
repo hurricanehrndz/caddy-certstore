@@ -241,7 +241,7 @@ func TestCertSelector_LoadCertificate_Windows(t *testing.T) {
 			selector: &CertSelector{
 				Name:     "test\\..*\\.local",
 				Location: "user",
-				pattern:  regexp.MustCompile("test\\..*\\.local"),
+				pattern:  regexp.MustCompile(`test\..*\.local`),
 			},
 			expectError: false,
 			validate: func(t *testing.T, cert tls.Certificate) {

@@ -109,11 +109,6 @@ func buildTLSCertificate(identity certstore.Identity) (tls.Certificate, error) {
 	return cert, nil
 }
 
-// isValidCertificate checks if a certificate has the required components.
-func isValidCertificate(cert tls.Certificate) bool {
-	return len(cert.Certificate) != 0 && cert.PrivateKey != nil
-}
-
 // serializeCertificateChain converts a certificate chain to raw DER format.
 func serializeCertificateChain(chain []*x509.Certificate) [][]byte {
 	out := [][]byte{}
