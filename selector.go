@@ -6,6 +6,7 @@ import (
 	"regexp"
 
 	"github.com/tailscale/certstore"
+	"go.uber.org/zap"
 )
 
 // CertSelector specifies criteria for selecting a certificate from the store.
@@ -25,6 +26,7 @@ type CertSelector struct {
 	store    certstore.Store
 	identity certstore.Identity
 	pattern  *regexp.Regexp
+	logger   *zap.Logger
 }
 
 // cleanup closes the identity and store resources and resets internal state.
@@ -60,6 +62,23 @@ func (cs *CertSelector) loadCertificate() (tls.Certificate, error) {
 	if err != nil {
 		store.Close()
 		return cert, fmt.Errorf("%w in %s store", err, cs.Location)
+	}
+
+	// Log the certificate details if logger is available
+	if cs.logger != nil {
+		certInfo, err := identity.Certificate()
+		if err == nil {
+			issuer := certInfo.Issuer.CommonName
+			if issuer == "" {
+				issuer = certInfo.Issuer.String()
+			}
+			cs.logger.Info("loaded client certificate from OS certificate store",
+				zap.String("common_name", certInfo.Subject.CommonName),
+				zap.String("issuer", issuer),
+				zap.String("serial_number", certInfo.SerialNumber.String()),
+				zap.String("location", cs.Location),
+			)
+		}
 	}
 
 	cert, err = buildTLSCertificate(identity)

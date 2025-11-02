@@ -56,6 +56,9 @@ func (h *HTTPTransport) Provision(ctx caddy.Context) error {
 		return fmt.Errorf("client_certificate must set 'name' property")
 	}
 
+	// Set up logger for the cert selector
+	h.ClientCert.logger = ctx.Logger()
+
 	// Compile regex pattern if Name looks like a regex
 	certNameOrPattern := h.ClientCert.Name
 	if isRegexPattern(h.ClientCert.Name) {

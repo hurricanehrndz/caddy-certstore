@@ -5,6 +5,7 @@ go 1.25.3
 require (
 	github.com/caddyserver/caddy/v2 v2.10.2
 	github.com/tailscale/certstore v0.1.1-0.20231202035212-d3fa0460f47e
+	go.uber.org/zap v1.27.0
 )
 
 require (
@@ -108,7 +109,6 @@ require (
 	go.uber.org/automaxprocs v1.6.0 // indirect
 	go.uber.org/mock v0.5.2 // indirect
 	go.uber.org/multierr v1.11.0 // indirect
-	go.uber.org/zap v1.27.0 // indirect
 	go.uber.org/zap/exp v0.3.0 // indirect
 	golang.org/x/crypto v0.40.0 // indirect
 	golang.org/x/crypto/x509roots/fallback v0.0.0-20250305170421-49bf5b80c810 // indirect
