@@ -14,15 +14,15 @@ Test types include:
 
 - **Unit Tests**: Test individual functions and components (platform-agnostic)
 - **Integration Tests**: Test actual certificate loading from OS certificate stores (Darwin/Windows)
-- **Provisioner Tests**: Test Caddy's provisioning and replacer functionality
-- **Benchmark Tests**: Performance testing for certificate operations
+- **HTTP Transport Tests**: Test Caddy's reverse proxy transport provisioning
+- **Certificate Selector Tests**: Test certificate matching and loading logic
 
 ## Prerequisites
 
 ### For All Tests
 
 ```bash
-go version  # Go 1.25 or later required
+go version  # Go 1.21 or later required
 ```
 
 ### For Integration Tests (macOS and Windows)
@@ -72,67 +72,52 @@ go test -v ./...
 ### Run Specific Tests
 
 ```bash
-# Run only provisioner tests
-SKIP_KEYCHAIN_TESTS=1 go test -v -run TestCertStoreLoader_Provision
+# Run only HTTPTransport provision tests
+SKIP_KEYCHAIN_TESTS=1 go test -v -run TestHTTPTransport_Provision
 
-# Run only integration tests
-go test -v -run TestCertStoreLoader_LoadCertificates_Integration
+# Run only CertSelector tests
+SKIP_KEYCHAIN_TESTS=1 go test -v -run TestCertSelector
 
-# Run only unit tests for validation
-SKIP_KEYCHAIN_TESTS=1 go test -v -run TestIsValidCertificate
-```
-
-### Run Benchmarks
-
-```bash
-# Run all benchmarks (skips keychain benchmarks)
-SKIP_KEYCHAIN_TESTS=1 go test -bench=. -benchmem
-
-# Run keychain benchmarks
-go test -bench=BenchmarkLoadCertificate_Darwin
+# Run only regex pattern tests
+go test -v -run TestIsRegexPattern
 ```
 
 ## Test Details
 
 ### Unit Tests (module_test.go)
 
-These tests are platform-agnostic and don't require keychain access:
+These tests are platform-agnostic and don't require certificate store access:
 
-- `TestCertStoreLoader_CaddyModule`: Validates module registration
-- `TestCertStoreLoader_Provision`: Tests configuration provisioning and validation
-- `TestCertStoreLoader_Cleanup`: Tests resource cleanup
-- `TestCertificateSelector_Cleanup`: Tests selector cleanup
-- `TestGetStoreLocation`: Tests store location parsing
-- `TestIsValidCertificate`: Tests certificate validation
-- `TestReplaceTags`: Tests Caddy replacer functionality for tags
+- `TestIsRegexPattern`: Tests regex pattern detection logic
+  - Validates that FQDNs are not treated as regex patterns
+  - Validates that regex metacharacters are properly detected
+  - Tests various regex patterns (wildcards, anchors, groups, etc.)
 
 ### Integration Tests (module_darwin_test.go - macOS)
 
 These tests are macOS-specific and use pre-generated test certificates:
 
-- `TestCertStoreLoader_LoadCertificates_Integration`: Comprehensive integration test that:
-  - Imports test certificate into login keychain
-  - Tests loading by common name
-  - Tests loading by issuer
+- `TestHTTPTransport_Provision_Darwin`: Tests provisioning of HTTPTransport with client certificates
+  - Tests exact certificate name matching
+  - Tests regex pattern matching
   - Tests error handling for non-existent certificates
-  - Tests tag functionality
-  - Cleans up test certificates after completion
+  - Tests provisioning without client cert (should succeed)
+  - Tests validation of empty certificate name (should fail)
+  
+- `TestCertSelector_LoadCertificate_Darwin`: Tests certificate loading logic
+  - Tests loading by exact common name
+  - Tests loading by regex pattern
+  - Tests error handling for non-existent certificates
+  
 - `TestSerializeCertificateChain_Darwin`: Tests certificate chain serialization with real certificates
-- `BenchmarkLoadCertificate_Darwin`: Performance benchmark for keychain operations
 
 ### Integration Tests (module_windows_test.go - Windows)
 
-These tests are Windows-specific and use pre-generated test certificates:
+These tests are Windows-specific and mirror the Darwin tests:
 
-- `TestCertStoreLoader_LoadCertificates_Integration`: Comprehensive integration test that:
-  - Imports test certificate into CurrentUser\My certificate store
-  - Tests loading by common name
-  - Tests loading by issuer
-  - Tests error handling for non-existent certificates
-  - Tests tag functionality
-  - Cleans up test certificates after completion
-- `TestSerializeCertificateChain_Windows`: Tests certificate chain serialization with real certificates
-- `BenchmarkLoadCertificate_Windows`: Performance benchmark for certificate store operations
+- `TestHTTPTransport_Provision_Windows`: Same test coverage as Darwin version for Windows Certificate Store
+- `TestCertSelector_LoadCertificate_Windows`: Same test coverage as Darwin version for Windows Certificate Store  
+- `TestSerializeCertificateChain_Windows`: Tests certificate chain serialization on Windows
 
 ### How Integration Tests Work
 
@@ -143,15 +128,15 @@ These tests are Windows-specific and use pre-generated test certificates:
    - `test-key.pem` - Private key  
    - `test-cert.p12` - PKCS#12/PFX bundle
    - Common Name: `test.caddycertstore.local`
-   - Valid for 5 years (2025-2030)
+   - Password: `test123`
 
 2. **Keychain Import**: Uses macOS `security` command-line tool to import the certificate into the **login keychain** (no sudo required)
 
-3. **Module Testing**: Tests the actual `CertStoreLoader` functionality
+3. **Module Testing**: Tests the actual `HTTPTransport` and `CertSelector` functionality
 
 4. **Cleanup**: Removes test certificates from the keychain after tests complete
 
-**Note**: On macOS, when you open a certificate store (system or user), the certstore library provides access to certificates from both the system and login keychains. This is normal macOS keychain behavior.
+**Note**: On macOS, the certstore library provides access to certificates from both system and login keychains automatically.
 
 **Windows (`module_windows_test.go`):**
 
@@ -161,11 +146,11 @@ These tests are Windows-specific and use pre-generated test certificates:
 
 2. **Certificate Store Import**: Uses PowerShell `Import-PfxCertificate` cmdlet to import into **CurrentUser\My** (Personal) store (no administrator privileges required)
 
-3. **Module Testing**: Tests the actual `CertStoreLoader` functionality
+3. **Module Testing**: Tests the actual `HTTPTransport` and `CertSelector` functionality
 
 4. **Cleanup**: Removes test certificates from the certificate store after tests complete
 
-**Note**: On Windows, the certstore library can access both CurrentUser and LocalMachine certificate stores. Integration tests use CurrentUser for simplicity.
+**Note**: On Windows, the certstore library can access both CurrentUser and LocalMachine certificate stores.
 
 ### Platform-Specific Build Tags
 
@@ -187,9 +172,6 @@ This ensures that CI/CD pipelines on different platforms only run the tests rele
   $env:SKIP_CERTSTORE_TESTS=1; go test -v ./...
   ```
 
-- **`TEST_CERT_NAME`**: Used in provisioner tests for replacer validation
-- **`ENVIRONMENT`**: Used in provisioner tests for tag replacer validation
-
 ## Test Coverage
 
 Generate a coverage report:
@@ -199,11 +181,10 @@ Generate a coverage report:
 SKIP_KEYCHAIN_TESTS=1 go test -coverprofile=coverage.out ./...
 go tool cover -html=coverage.out
 
-# With integration tests
+# With integration tests (macOS)
 go test -coverprofile=coverage.out ./...
 go tool cover -html=coverage.out
 ```
-
 
 ## Continuous Integration
 
@@ -227,7 +208,84 @@ For CI environments (GitHub Actions, etc.):
     go test -v ./...
 ```
 
+### Linux Runners (Unit Tests Only)
+
+```yaml
+- name: Run Unit Tests
+  env:
+    SKIP_KEYCHAIN_TESTS: 1
+  run: |
+    go mod download
+    go test -v ./...
 ```
+
+## What Tests Validate
+
+### HTTPTransport Module
+- ✅ Module registration with Caddy
+- ✅ Provisioning with valid certificate names
+- ✅ Provisioning with regex patterns
+- ✅ TLS client config is properly set
+- ✅ Certificate and private key are loaded
+- ✅ Error handling for non-existent certificates
+- ✅ Error handling for empty certificate names
+- ✅ Provisioning without client cert (nil check)
+- ✅ Cleanup of certificate store resources
+
+### CertSelector
+- ✅ Certificate loading by exact common name
+- ✅ Certificate loading by regex pattern
+- ✅ Proper error messages for failures
+- ✅ Certificate Leaf is populated
+- ✅ Private key is available
+- ✅ Resource cleanup
+
+### Utility Functions
+- ✅ Regex pattern detection logic
+- ✅ Certificate chain serialization
+- ✅ Store location parsing (system/user/machine)
+
+## Common Test Scenarios
+
+### Testing Certificate Name Matching
+
+```bash
+# Test exact name matching
+go test -v -run TestCertSelector_LoadCertificate_Darwin/load_by_exact_common_name
+
+# Test regex pattern matching  
+go test -v -run TestCertSelector_LoadCertificate_Darwin/load_by_regex_pattern
+```
+
+### Testing Error Conditions
+
+```bash
+# Test non-existent certificate
+go test -v -run TestHTTPTransport_Provision_Darwin/provision_with_non-existent_certificate
+
+# Test empty name validation
+go test -v -run TestHTTPTransport_Provision_Darwin/provision_with_empty_name
+```
+
+## Troubleshooting Tests
+
+### macOS: "Certificate already in keychain"
+
+This is expected behavior. The test checks for existing certificates and reuses them if found.
+
+### macOS: "Failed to import certificate to keychain"
+
+Ensure:
+- You have permission to access the login keychain
+- The keychain is unlocked
+- Test certificates exist in `testdata/`
+
+### Windows: "Failed to import certificate"
+
+Ensure:
+- PowerShell execution policy allows running cmdlets
+- Test certificates exist in `testdata/`
+- You're using CurrentUser store (no admin needed)
 
 ## Contributing
 
@@ -237,10 +295,11 @@ When adding new tests:
 2. Use `t.Helper()` for test helper functions
 3. Clean up resources in defer statements or cleanup functions
 4. Skip integration tests appropriately:
-   - macOS: `SKIP_KEYCHAIN_TESTS`
-   - Windows: `SKIP_CERTSTORE_TESTS`
+   - macOS: Check `SKIP_KEYCHAIN_TESTS` env var
+   - Windows: Check `SKIP_CERTSTORE_TESTS` env var
 5. Use platform-specific build tags (`//go:build darwin` or `//go:build windows`)
-6. Document any new test requirements
+6. Document any new test requirements or scenarios
+7. Ensure tests are idempotent and can run multiple times
 
 ## Questions?
 
