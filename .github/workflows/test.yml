@@ -108,7 +108,12 @@ jobs:
 
       - name: Validate test configuration
         shell: bash
-        run: ./caddy validate --config testdata/test-config.json
+        run: |
+          if [ "$RUNNER_OS" == "Windows" ]; then
+            ./caddy.exe validate --config testdata/test-config.json
+          else
+            ./caddy validate --config testdata/test-config.json
+          fi
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v5
