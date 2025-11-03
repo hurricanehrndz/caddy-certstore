@@ -78,7 +78,7 @@ jobs:
         shell: bash
         run: |
           go install github.com/caddyserver/xcaddy/cmd/xcaddy@latest
-          xcaddy build --output ./caddy --with github.com/hurricanehrndz/caddy-certstore=.
+          CGO_ENABLED=1 xcaddy build --output ./caddy --with github.com/hurricanehrndz/caddy-certstore=.
 
       - name: Validate test configuration
         shell: bash
