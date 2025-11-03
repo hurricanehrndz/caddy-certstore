@@ -42,6 +42,12 @@ func (h HTTPTransport) CaddyModule() caddy.ModuleInfo {
 // from the OS certificate store based on the configured matcher criteria.
 // It compiles regex patterns if needed and validates the certificate exists.
 func (h *HTTPTransport) Provision(ctx caddy.Context) error {
+	// Support placeholders:
+	repl, ok := ctx.Value(caddy.ReplacerCtxKey).(*caddy.Replacer)
+	if !ok {
+		repl = caddy.NewReplacer()
+	}
+
 	// Provision the embedded transport first
 	if err := h.HTTPTransport.Provision(ctx); err != nil {
 		return err
@@ -60,6 +66,8 @@ func (h *HTTPTransport) Provision(ctx caddy.Context) error {
 	h.ClientCert.logger = ctx.Logger()
 
 	// Compile regex pattern if Name looks like a regex
+	h.ClientCert.Name = repl.ReplaceKnown(h.ClientCert.Name, "")
+
 	certNameOrPattern := h.ClientCert.Name
 	if isRegexPattern(h.ClientCert.Name) {
 		var err error
