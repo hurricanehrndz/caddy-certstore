@@ -80,6 +80,32 @@ jobs:
           go install github.com/caddyserver/xcaddy/cmd/xcaddy@latest
           CGO_ENABLED=1 xcaddy build --output ./caddy --with github.com/hurricanehrndz/caddy-certstore=.
 
+      - name: Import test certificate (macOS)
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          security import testdata/test-cert.p12 \
+            -k $HOME/Library/Keychains/login.keychain-db \
+            -P test123 \
+            -T /usr/bin/codesign \
+            -T /usr/bin/security || echo "Certificate may already exist"
+
+      - name: Import test certificate (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $password = ConvertTo-SecureString -String "test123" -AsPlainText -Force
+          try {
+            $cert = Import-PfxCertificate -FilePath "testdata/test-cert.p12" -CertStoreLocation Cert:\CurrentUser\My -Password $password -Exportable
+            Write-Output "Imported certificate with thumbprint $($cert.Thumbprint)"
+          } catch {
+            if ($_.Exception.Message -like "*already exists*") {
+              Write-Output "Certificate already exists"
+              exit 0
+            }
+            throw
+          }
+
       - name: Validate test configuration
         shell: bash
         run: ./caddy validate --config testdata/test-config.json
