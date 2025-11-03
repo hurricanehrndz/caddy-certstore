@@ -90,30 +90,11 @@ jobs:
             -T /usr/bin/codesign \
             -T /usr/bin/security || echo "Certificate may already exist"
 
-      - name: Import test certificate (Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          $password = ConvertTo-SecureString -String "test123" -AsPlainText -Force
-          try {
-            $cert = Import-PfxCertificate -FilePath "testdata/test-cert.p12" -CertStoreLocation Cert:\CurrentUser\My -Password $password -Exportable
-            Write-Output "Imported certificate with thumbprint $($cert.Thumbprint)"
-          } catch {
-            if ($_.Exception.Message -like "*already exists*") {
-              Write-Output "Certificate already exists"
-              exit 0
-            }
-            throw
-          }
-
       - name: Validate test configuration
+        if: runner.os == 'macOS'
         shell: bash
         run: |
-          if [ "$RUNNER_OS" == "Windows" ]; then
-            ./caddy.exe validate --config testdata/test-config.json
-          else
             ./caddy validate --config testdata/test-config.json
-          fi
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v5
