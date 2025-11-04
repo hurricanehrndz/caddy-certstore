@@ -91,13 +91,13 @@ Tag Pushed (v*.*.*)
 Environment:
   - SKIP_KEYCHAIN_TESTS: 1
   - SKIP_CERTSTORE_TESTS: 1
-  
+
 Actions:
   ✓ Download dependencies
   ✓ Run unit tests with race detector
   ✓ Generate coverage report
   ✗ Skip integration tests (no certificate store)
-  
+
 Duration: ~2-3 minutes
 ```
 
@@ -105,7 +105,7 @@ Duration: ~2-3 minutes
 ```yaml
 Environment:
   - No skip flags (run all tests)
-  
+
 Actions:
   ✓ Download dependencies
   ✓ Verify test certificates exist
@@ -115,7 +115,7 @@ Actions:
   ✓ Test certificate loading
   ✓ Cleanup keychain
   ✓ Generate coverage report
-  
+
 Duration: ~5-7 minutes
 ```
 
@@ -123,7 +123,7 @@ Duration: ~5-7 minutes
 ```yaml
 Environment:
   - No skip flags (run all tests)
-  
+
 Actions:
   ✓ Download dependencies (PowerShell)
   ✓ Verify test certificates exist
@@ -133,7 +133,7 @@ Actions:
   ✓ Test certificate loading
   ✓ Cleanup certificate store
   ✓ Generate coverage report
-  
+
 Duration: ~5-8 minutes
 ```
 

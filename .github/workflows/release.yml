@@ -1,17 +1,14 @@
 name: Release
-
 on:
   push:
     tags:
       - 'v*'
   workflow_dispatch:
-
 jobs:
   # Run full test suite before release
   test:
     name: Full Test Suite
     uses: ./.github/workflows/test.yml
-
   # Create GitHub release
   release:
     name: Create Release
@@ -24,22 +21,18 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
           go-version-file: '.go-version'
-
       - name: Get version
         id: get_version
         run: echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
-
       - name: Generate changelog
         id: changelog
         uses: metcalfc/changelog-generator@v4.6.2
         with:
           myToken: ${{ secrets.PULL_TOKEN }}
-
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:

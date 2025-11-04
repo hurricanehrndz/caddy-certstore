@@ -107,7 +107,7 @@ These tests use pre-generated test certificates and run on their respective plat
   - Tests loading by exact common name
   - Tests loading by regex pattern
   - Tests error handling for non-existent certificates
-  
+
 - `TestSerializeCertificateChain`: Tests certificate chain serialization with real certificates
 
 
@@ -117,7 +117,7 @@ These tests use pre-generated test certificates and run on their respective plat
 
 1. **Test Certificate**: Located in `testdata/` (committed to repository):
    - `test-cert.pem` - Self-signed certificate
-   - `test-key.pem` - Private key  
+   - `test-key.pem` - Private key
    - `test-cert.p12` - PKCS#12/PFX bundle
    - Common Name: `test.caddycertstore.local`
    - Password: `test123`
@@ -240,7 +240,7 @@ For CI environments (GitHub Actions, etc.):
 # Test exact name matching
 go test -v -run TestCertSelector_LoadCertificate/load_by_exact_common_name
 
-# Test regex pattern matching  
+# Test regex pattern matching
 go test -v -run TestCertSelector_LoadCertificate/load_by_regex_pattern
 ```
 

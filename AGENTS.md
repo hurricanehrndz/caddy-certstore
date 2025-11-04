@@ -16,7 +16,7 @@
 **Comments**: Document all exported types/functions with proper godoc format. Start with the name being documented.
 **JSON Tags**: Use `json:"field_name,omitempty"` for optional config fields (Caddy convention).
 **Alignment**: Align the happy path to the left
-**Complexity**: Ensure code adheres to following coding principles: KISS, SRP, DRY and prioritize clarity over brevity or clever 
+**Complexity**: Ensure code adheres to following coding principles: KISS, SRP, DRY and prioritize clarity over brevity or clever
 **General**: Use modern features of Go when possible
 
 ## Project Context

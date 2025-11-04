@@ -1,16 +1,14 @@
 name: Tests
-
 on:
   push:
-    branches: [ main, master, develop ]
+    branches: [main, master, develop]
   pull_request:
-    branches: [ main, master, develop ]
+    branches: [main, master, develop]
     types: [opened, synchronize, reopened]
   schedule:
     # Run weekly on Monday at 00:00 UTC
     - cron: '0 0 * * 1'
   workflow_call:
-
 jobs:
   quality:
     name: Lint, Format, Dependencies
@@ -18,25 +16,19 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-
       - uses: actions/setup-python@v3
       - uses: pre-commit/action@v3.0.1
-
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
           go-version-file: '.go-version'
           cache: true
-
       - name: Download dependencies
         run: go mod download
-
       - name: Download tools
         run: go mod download -modfile=tools.mod
-
       - name: Run make lint
         run: make lint
-
       - name: Check formatting
         run: |
           make format
@@ -45,13 +37,11 @@ jobs:
             git diff
             exit 1
           fi
-
       - name: Verify dependencies
         run: |
           go mod verify
           go mod tidy
           git diff --exit-code go.mod go.sum
-
   # Platform integration tests
   integration-tests:
     name: ${{ matrix.os }} Integration with Coverage
@@ -63,27 +53,22 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
           go-version-file: '.go-version'
           cache: true
-
       - name: Download dependencies
         run: go mod download
-
       - name: Run all tests (including integration)
         shell: bash
         run: go test -v -race -coverprofile=coverage.txt -covermode=atomic ./...
-
       - name: Build Caddy with module
         if: runner.os == 'macOS'
         shell: bash
         run: |
           go install github.com/caddyserver/xcaddy/cmd/xcaddy@latest
           CGO_ENABLED=1 xcaddy build --output ./caddy --with github.com/hurricanehrndz/caddy-certstore=.
-
       - name: Import test certificate (macOS)
         if: runner.os == 'macOS'
         shell: bash
@@ -93,13 +78,11 @@ jobs:
             -P test123 \
             -T /usr/bin/codesign \
             -T /usr/bin/security || echo "Certificate may already exist"
-
       - name: Validate test configuration
         if: runner.os == 'macOS'
         shell: bash
         run: |
-            ./caddy validate --config testdata/test-config.json
-
+          ./caddy validate --config testdata/test-config.json
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v5
         with:
