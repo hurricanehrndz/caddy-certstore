@@ -1,5 +1,8 @@
 # caddy-certstore
 
+[![codecov](https://codecov.io/gh/hurricanehrndz/caddy-certstore/graph/badge.svg?token=9M6LUGJAQM)](https://codecov.io/gh/hurricanehrndz/caddy-certstore)
+[![Tests](https://github.com/hurricanehrndz/caddy-certstore/actions/workflows/test.yml/badge.svg)](https://github.com/hurricanehrndz/caddy-certstore/actions)
+
 A Caddy v2 HTTP reverse proxy transport module that enables client certificate
 authentication using certificates from OS certificate stores (macOS Keychain
 and Windows Certificate Store) for mTLS connections to upstream servers.
