@@ -75,6 +75,7 @@ jobs:
         run: go test -v -race -coverprofile=coverage.txt -covermode=atomic ./...
 
       - name: Build Caddy with module
+        if: runner.os == 'macOS'
         shell: bash
         run: |
           go install github.com/caddyserver/xcaddy/cmd/xcaddy@latest

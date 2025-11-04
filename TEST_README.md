@@ -17,7 +17,8 @@ Test types include:
 - **HTTP Transport Tests**: Test Caddy's reverse proxy transport provisioning
 - **Certificate Selector Tests**: Test certificate matching and loading logic
 
-Tests are automatically filtered by platform using build tags; platform-specific files contain only helper functions.
+Tests are automatically filtered by platform using build tags;
+platform-specific files contain only helper functions.
 
 ## Prerequisites
 
@@ -149,11 +150,15 @@ These tests use pre-generated test certificates and run on their respective plat
 - **`module_windows_test.go`**: Uses `//go:build windows` for Windows helper functions
 - **`module_test.go`**: Contains shared tests that use platform-specific helpers via build tags
 
-Build tags automatically ensure tests only run on supported platforms. Integration tests in `module_test.go` call platform-specific helpers that are only compiled on their respective platforms.
+Build tags automatically ensure tests only run on supported platforms.
+Integration tests in `module_test.go` call platform-specific helpers that are
+only compiled on their respective platforms.
 
 ## Platform Filtering
 
-Tests automatically run only on supported platforms via build tags. No environment variables are needed to skip platform-specific tests - they simply won't compile on unsupported platforms.
+Tests automatically run only on supported platforms via build tags. No
+environment variables are needed to skip platform-specific tests - they simply
+won't compile on unsupported platforms.
 
 To run only unit tests without integration tests, use test name filters:
 ```bash
