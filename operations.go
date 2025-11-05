@@ -25,18 +25,40 @@ func getStoreLocation(location string) certstore.StoreLocation {
 // findMatchingIdentity searches for an identity based on the certificate matcher criteria.
 // If pattern is non-nil, it delegates to regex-based matching; otherwise, it uses exact
 // common name matching. It closes all non-matching identities.
-func findMatchingIdentity(identities []certstore.Identity, commonName string, pattern *regexp.Regexp) (match certstore.Identity, err error) {
+func findMatchingIdentity(identities []certstore.Identity, issuer, commonName string, pattern *regexp.Regexp) (match certstore.Identity, err error) {
 	switch {
+	case issuer != "":
+		return findMatchingIdentityByField(
+			identities,
+			issuer,
+			func(cert *x509.Certificate) string { return cert.Issuer.CommonName },
+			"Issuer",
+		)
 	case pattern != nil:
-		return findMatchingIdentityByPattern(identities, pattern)
+		return findMatchingIdentityByPattern(
+			identities,
+			pattern,
+			func(cert *x509.Certificate) string { return cert.Subject.CommonName },
+			"CN",
+		)
 	default:
-		return findMatchingIdentityByCommonName(identities, commonName)
+		return findMatchingIdentityByField(
+			identities,
+			commonName,
+			func(cert *x509.Certificate) string { return cert.Subject.CommonName },
+			"CN",
+		)
 	}
 }
 
-// findMatchingIdentityByCommonName searches for an identity with the given common name.
+// findMatchingIdentityByField searches for an identity using a custom field selector.
 // It closes all non-matching identities and returns the first match, or an error if not found.
-func findMatchingIdentityByCommonName(identities []certstore.Identity, commonName string) (match certstore.Identity, err error) {
+func findMatchingIdentityByField(
+	identities []certstore.Identity,
+	targetValue string,
+	selector func(*x509.Certificate) string,
+	fieldName string,
+) (match certstore.Identity, err error) {
 	for _, tmpID := range identities {
 		certInfo, err := tmpID.Certificate()
 		if err != nil {
@@ -44,8 +66,7 @@ func findMatchingIdentityByCommonName(identities []certstore.Identity, commonNam
 			continue
 		}
 
-		matched := certInfo.Subject.CommonName == commonName
-		if matched {
+		if selector(certInfo) == targetValue {
 			match = tmpID
 			break
 		}
@@ -54,7 +75,7 @@ func findMatchingIdentityByCommonName(identities []certstore.Identity, commonNam
 	}
 
 	if match == nil {
-		err = fmt.Errorf("no identity found with CN '%s'", commonName)
+		err = fmt.Errorf("no identity found with %s '%s'", fieldName, targetValue)
 	}
 
 	return match, err
@@ -62,7 +83,12 @@ func findMatchingIdentityByCommonName(identities []certstore.Identity, commonNam
 
 // findMatchingIdentityByPattern searches for an identity with the given regex pattern.
 // It closes all non-matching identities and returns the first match, or an error if not found.
-func findMatchingIdentityByPattern(identities []certstore.Identity, pattern *regexp.Regexp) (match certstore.Identity, err error) {
+func findMatchingIdentityByPattern(
+	identities []certstore.Identity,
+	re *regexp.Regexp,
+	selector func(*x509.Certificate) string,
+	fieldName string,
+) (match certstore.Identity, err error) {
 	for _, tmpID := range identities {
 		certInfo, err := tmpID.Certificate()
 		if err != nil {
@@ -70,7 +96,7 @@ func findMatchingIdentityByPattern(identities []certstore.Identity, pattern *reg
 			continue
 		}
 
-		matched := pattern.MatchString(certInfo.Subject.CommonName)
+		matched := re.MatchString(selector(certInfo))
 		if matched {
 			match = tmpID
 			break
@@ -80,7 +106,7 @@ func findMatchingIdentityByPattern(identities []certstore.Identity, pattern *reg
 	}
 
 	if match == nil {
-		err = fmt.Errorf("no identity found matching pattern '%s'", pattern.String())
+		err = fmt.Errorf("no identity found with %s '%s'", fieldName, re.String())
 	}
 
 	return match, err

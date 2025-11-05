@@ -57,19 +57,22 @@ func (h *HTTPTransport) Provision(ctx caddy.Context) error {
 		return nil
 	}
 
-	// Validate that Name is set
-	if h.ClientCert.Name == "" {
+	// Validate config
+	hasName := h.ClientCert.Name != ""
+	hasIssuer := h.ClientCert.Issuer != ""
+	if hasName == hasIssuer {
 		return fmt.Errorf("client_certificate must set 'name' property")
 	}
 
 	// Set up logger for the cert selector
 	h.ClientCert.logger = ctx.Logger()
 
-	// Compile regex pattern if Name looks like a regex
 	h.ClientCert.Name = repl.ReplaceKnown(h.ClientCert.Name, "")
+	h.ClientCert.Issuer = repl.ReplaceKnown(h.ClientCert.Issuer, "")
 
+	// Compile regex pattern if Name looks like a regex
 	certNameOrPattern := h.ClientCert.Name
-	if isRegexPattern(h.ClientCert.Name) {
+	if isRegexPattern(certNameOrPattern) && certNameOrPattern != "" {
 		var err error
 		h.ClientCert.pattern, err = regexp.Compile(certNameOrPattern)
 		if err != nil {

@@ -22,6 +22,10 @@ type CertSelector struct {
 	// On macOS: "user" or "system" (no effect - Keychain searches both automatically)
 	Location string `json:"location,omitempty"`
 
+	// Issuer is the common name of ceritifcate authority that issued the certificate to be loaded,
+	// only exact matches are supported.
+	Issuer string `json:"issuer,omitempty"`
+
 	// runtime resources kept for cleanup (unexported, not serialized)
 	cacheKey string
 	pattern  *regexp.Regexp
@@ -46,7 +50,7 @@ func (cs *CertSelector) loadCertificateWithResources() (tls.Certificate, certsto
 		return cert, nil, nil, err
 	}
 
-	identity, err := findMatchingIdentity(identities, cs.Name, cs.pattern)
+	identity, err := findMatchingIdentity(identities, cs.Issuer, cs.Name, cs.pattern)
 	if err != nil {
 		store.Close()
 		return cert, nil, nil, fmt.Errorf("%w in %s store", err, cs.Location)
