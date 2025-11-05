@@ -13,12 +13,10 @@ format:
 test:
 	go test -v -race  -covermode=atomic ./...
 
-
 caddy: build/darwin/caddy
 build/darwin/caddy:
 	test -f $(@D) || mkdir -p $(@D)
-	@go install github.com/caddyserver/xcaddy/cmd/xcaddy@latest
-	CGO_ENABLED=1 xcaddy build \
+	CGO_ENABLED=1 go tool -modfile=tools.mod xcaddy build \
 		--output $(@) \
 		--with github.com/hurricanehrndz/caddy-certstore=.
 
