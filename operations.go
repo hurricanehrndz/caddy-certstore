@@ -22,94 +22,54 @@ func getStoreLocation(location string) certstore.StoreLocation {
 	}
 }
 
-// findMatchingIdentity searches for an identity based on the certificate matcher criteria.
-// If pattern is non-nil, it delegates to regex-based matching; otherwise, it uses exact
-// common name matching. It closes all non-matching identities.
-func findMatchingIdentity(identities []certstore.Identity, issuer, commonName string, pattern *regexp.Regexp) (match certstore.Identity, err error) {
-	switch {
-	case issuer != "":
-		return findMatchingIdentityByField(
-			identities,
-			issuer,
-			func(cert *x509.Certificate) string { return cert.Issuer.CommonName },
-			"Issuer",
-		)
-	case pattern != nil:
-		return findMatchingIdentityByPattern(
-			identities,
-			pattern,
-			func(cert *x509.Certificate) string { return cert.Subject.CommonName },
-			"CN",
-		)
+// findMatchingIdentity searches for an identity using regex pattern matching.
+// It closes all non-matching identities and returns the first match, or an error if not found.
+func findMatchingIdentity(identities []certstore.Identity, pattern *regexp.Regexp, field string) (match certstore.Identity, err error) {
+	if pattern == nil {
+		return nil, fmt.Errorf("pattern is required")
+	}
+
+	selector := getFieldSelector(field)
+	for _, tmpID := range identities {
+		certInfo, err := tmpID.Certificate()
+		if err != nil {
+			tmpID.Close()
+			continue
+		}
+
+		fieldValue := selector(certInfo)
+		if pattern.MatchString(fieldValue) {
+			match = tmpID
+			break
+		}
+
+		tmpID.Close()
+	}
+
+	if match == nil {
+		err = fmt.Errorf("no identity found matching pattern '%s' in field '%s'", pattern.String(), field)
+	}
+
+	return match, err
+}
+
+// getFieldSelector returns a function that extracts the specified field from a certificate.
+func getFieldSelector(field string) func(*x509.Certificate) string {
+	switch field {
+	case "issuer":
+		return func(cert *x509.Certificate) string { return cert.Issuer.CommonName }
+	case "serial":
+		return func(cert *x509.Certificate) string { return cert.SerialNumber.String() }
+	case "dns_names":
+		return func(cert *x509.Certificate) string {
+			if len(cert.DNSNames) == 0 {
+				return ""
+			}
+			return cert.DNSNames[0]
+		}
 	default:
-		return findMatchingIdentityByField(
-			identities,
-			commonName,
-			func(cert *x509.Certificate) string { return cert.Subject.CommonName },
-			"CN",
-		)
+		return func(cert *x509.Certificate) string { return cert.Subject.CommonName }
 	}
-}
-
-// findMatchingIdentityByField searches for an identity using a custom field selector.
-// It closes all non-matching identities and returns the first match, or an error if not found.
-func findMatchingIdentityByField(
-	identities []certstore.Identity,
-	targetValue string,
-	selector func(*x509.Certificate) string,
-	fieldName string,
-) (match certstore.Identity, err error) {
-	for _, tmpID := range identities {
-		certInfo, err := tmpID.Certificate()
-		if err != nil {
-			tmpID.Close()
-			continue
-		}
-
-		if selector(certInfo) == targetValue {
-			match = tmpID
-			break
-		}
-
-		tmpID.Close()
-	}
-
-	if match == nil {
-		err = fmt.Errorf("no identity found with %s '%s'", fieldName, targetValue)
-	}
-
-	return match, err
-}
-
-// findMatchingIdentityByPattern searches for an identity with the given regex pattern.
-// It closes all non-matching identities and returns the first match, or an error if not found.
-func findMatchingIdentityByPattern(
-	identities []certstore.Identity,
-	re *regexp.Regexp,
-	selector func(*x509.Certificate) string,
-	fieldName string,
-) (match certstore.Identity, err error) {
-	for _, tmpID := range identities {
-		certInfo, err := tmpID.Certificate()
-		if err != nil {
-			tmpID.Close()
-			continue
-		}
-
-		matched := re.MatchString(selector(certInfo))
-		if matched {
-			match = tmpID
-			break
-		}
-
-		tmpID.Close()
-	}
-
-	if match == nil {
-		err = fmt.Errorf("no identity found with %s '%s'", fieldName, re.String())
-	}
-
-	return match, err
 }
 
 // buildTLSCertificate constructs a tls.Certificate from a certstore.Identity.

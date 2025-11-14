@@ -21,9 +21,18 @@ func TestCertificateCache_ConcurrentAccess(t *testing.T) {
 
 	// Create multiple selectors with different patterns that match the same cert
 	selectors := []*CertSelector{
-		{Name: testCertCN, Location: "user"},
-		{Name: "test\\..*\\.local", Location: "user", pattern: regexp.MustCompile(`test\..*\.local`)},
-		{Name: ".*caddycertstore.*", Location: "user", pattern: regexp.MustCompile(`.*caddycertstore.*`)},
+		{Pattern: "^" + testCertCN + "$", Location: "user"},
+		{Pattern: "test\\..*\\.local", Location: "user"},
+		{Pattern: ".*caddycertstore.*", Location: "user"},
+	}
+
+	// Compile patterns for all selectors
+	for _, sel := range selectors {
+		var err error
+		sel.pattern, err = regexp.Compile(sel.Pattern)
+		if err != nil {
+			t.Fatalf("Failed to compile pattern: %v", err)
+		}
 	}
 
 	var wg sync.WaitGroup
@@ -113,8 +122,15 @@ func TestCertificateCache_RefCounting(t *testing.T) {
 	cacheMutex.Unlock()
 
 	selector := &CertSelector{
-		Name:     testCertCN,
+		Pattern:  "^" + testCertCN + "$",
 		Location: "user",
+	}
+
+	// Compile pattern
+	var err error
+	selector.pattern, err = regexp.Compile(selector.Pattern)
+	if err != nil {
+		t.Fatalf("Failed to compile pattern: %v", err)
 	}
 
 	// Load certificate 3 times

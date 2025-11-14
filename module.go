@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"net/http"
 	"regexp"
-	"slices"
 
 	"github.com/caddyserver/caddy/v2"
 	"github.com/caddyserver/caddy/v2/modules/caddyhttp/reverseproxy"
@@ -58,32 +57,27 @@ func (h *HTTPTransport) Provision(ctx caddy.Context) error {
 	}
 
 	// Validate config
-	hasName := h.ClientCert.Name != ""
-	hasIssuer := h.ClientCert.Issuer != ""
-	if hasName == hasIssuer {
-		return fmt.Errorf("client_certificate must set 'name' property")
+	if h.ClientCert.Pattern == "" {
+		return fmt.Errorf("client_certificate must set 'pattern' property")
 	}
 
 	// Set up logger for the cert selector
 	h.ClientCert.logger = ctx.Logger()
 
-	h.ClientCert.Name = repl.ReplaceKnown(h.ClientCert.Name, "")
-	h.ClientCert.Issuer = repl.ReplaceKnown(h.ClientCert.Issuer, "")
+	h.ClientCert.Pattern = repl.ReplaceKnown(h.ClientCert.Pattern, "")
+	h.ClientCert.Field = repl.ReplaceKnown(h.ClientCert.Field, "")
 
-	// Compile regex pattern if Name looks like a regex
-	certNameOrPattern := h.ClientCert.Name
-	if isRegexPattern(certNameOrPattern) && certNameOrPattern != "" {
-		var err error
-		h.ClientCert.pattern, err = regexp.Compile(certNameOrPattern)
-		if err != nil {
-			return fmt.Errorf("invalid regex pattern '%s': %w", certNameOrPattern, err)
-		}
+	// Compile regex pattern
+	var err error
+	h.ClientCert.pattern, err = regexp.Compile(h.ClientCert.Pattern)
+	if err != nil {
+		return fmt.Errorf("invalid regex pattern '%s': %w", h.ClientCert.Pattern, err)
 	}
 
 	// Load certificate from cache (or load and cache it)
 	clientCert, err := h.ClientCert.loadCertificate()
 	if err != nil {
-		return fmt.Errorf("no client certificate found in: %s with common name: %s", h.ClientCert.Location, h.ClientCert.Name)
+		return fmt.Errorf("no client certificate found in: %s matching pattern: %s", h.ClientCert.Location, h.ClientCert.Pattern)
 	}
 
 	if h.Transport.TLSClientConfig == nil {
@@ -108,20 +102,6 @@ func (h *HTTPTransport) Cleanup() error {
 	}
 
 	return nil
-}
-
-// isRegexPattern checks if a string contains regex metacharacters
-// such as *, +, ?, ^, $, (, ), [, ], {, }, |, or \.
-// The dot (.) is intentionally excluded to avoid treating FQDNs as patterns.
-func isRegexPattern(s string) bool {
-	// Check for common regex metacharacters
-	regexChars := []rune{'*', '+', '?', '^', '$', '(', ')', '[', ']', '{', '}', '|', '\\'}
-	for _, r := range s {
-		if slices.Contains(regexChars, r) {
-			return true
-		}
-	}
-	return false
 }
 
 // Interface guards

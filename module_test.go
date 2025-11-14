@@ -21,37 +21,6 @@ const (
 	testCertPass = "test123"
 )
 
-func TestIsRegexPattern(t *testing.T) {
-	tests := []struct {
-		name     string
-		input    string
-		expected bool
-	}{
-		{"simple FQDN", "example.com", false},
-		{"FQDN with subdomain", "sub.example.com", false},
-		{"asterisk wildcard", "*.example.com", true},
-		{"plus quantifier", "test+", true},
-		{"question mark", "test?", true},
-		{"caret anchor", "^test", true},
-		{"dollar anchor", "test$", true},
-		{"parentheses", "(test)", true},
-		{"square brackets", "[test]", true},
-		{"curly braces", "{test}", true},
-		{"pipe", "test|other", true},
-		{"backslash", "test\\d", true},
-		{"escaped dot", "test\\.com", true},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := isRegexPattern(tt.input)
-			if result != tt.expected {
-				t.Errorf("isRegexPattern(%q) = %v, expected %v", tt.input, result, tt.expected)
-			}
-		})
-	}
-}
-
 func TestHTTPTransport_Provision(t *testing.T) {
 	importTestCertificate(t)
 	defer removeTestCertificate(t)
@@ -63,11 +32,11 @@ func TestHTTPTransport_Provision(t *testing.T) {
 		validate    func(*testing.T, *HTTPTransport)
 	}{
 		{
-			name: "provision with exact certificate name",
+			name: "provision with exact certificate pattern",
 			transport: &HTTPTransport{
 				HTTPTransport: &reverseproxy.HTTPTransport{},
 				ClientCert: &CertSelector{
-					Name:     testCertCN,
+					Pattern:  "^" + testCertCN + "$",
 					Location: "user",
 				},
 			},
@@ -93,7 +62,7 @@ func TestHTTPTransport_Provision(t *testing.T) {
 			transport: &HTTPTransport{
 				HTTPTransport: &reverseproxy.HTTPTransport{},
 				ClientCert: &CertSelector{
-					Name:     "test\\.caddycertstore\\..*",
+					Pattern:  "test\\.caddycertstore\\..*",
 					Location: "user",
 				},
 			},
@@ -112,7 +81,7 @@ func TestHTTPTransport_Provision(t *testing.T) {
 			transport: &HTTPTransport{
 				HTTPTransport: &reverseproxy.HTTPTransport{},
 				ClientCert: &CertSelector{
-					Name:     "nonexistent.certificate.local",
+					Pattern:  "nonexistent.certificate.local",
 					Location: "user",
 				},
 			},
@@ -131,11 +100,11 @@ func TestHTTPTransport_Provision(t *testing.T) {
 			},
 		},
 		{
-			name: "provision with empty name",
+			name: "provision with empty pattern",
 			transport: &HTTPTransport{
 				HTTPTransport: &reverseproxy.HTTPTransport{},
 				ClientCert: &CertSelector{
-					Name:     "",
+					Pattern:  "",
 					Location: "user",
 				},
 			},
@@ -182,9 +151,9 @@ func TestCertSelector_LoadCertificate(t *testing.T) {
 		validate    func(*testing.T, tls.Certificate)
 	}{
 		{
-			name: "load by exact common name",
+			name: "load by exact pattern",
 			selector: &CertSelector{
-				Name:     testCertCN,
+				Pattern:  "^" + testCertCN + "$",
 				Location: "user",
 			},
 			expectError: false,
@@ -203,9 +172,8 @@ func TestCertSelector_LoadCertificate(t *testing.T) {
 		{
 			name: "load by regex pattern",
 			selector: &CertSelector{
-				Name:     "test\\..*\\.local",
+				Pattern:  "test\\..*\\.local",
 				Location: "user",
-				pattern:  regexp.MustCompile(`test\..*\.local`),
 			},
 			expectError: false,
 			validate: func(t *testing.T, cert tls.Certificate) {
@@ -217,7 +185,7 @@ func TestCertSelector_LoadCertificate(t *testing.T) {
 		{
 			name: "load non-existent certificate",
 			selector: &CertSelector{
-				Name:     "nonexistent.local",
+				Pattern:  "nonexistent.local",
 				Location: "user",
 			},
 			expectError: true,
@@ -226,6 +194,13 @@ func TestCertSelector_LoadCertificate(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			// Compile pattern
+			var err error
+			tt.selector.pattern, err = regexp.Compile(tt.selector.Pattern)
+			if err != nil {
+				t.Fatalf("Failed to compile pattern: %v", err)
+			}
+
 			cert, err := tt.selector.loadCertificate()
 
 			if tt.expectError {

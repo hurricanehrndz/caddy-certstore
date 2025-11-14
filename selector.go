@@ -11,20 +11,18 @@ import (
 
 // CertSelector specifies criteria for selecting a certificate from the store.
 type CertSelector struct {
-	// Name is the common name or regex pattern of the certificate to load.
-	// If the value is a valid regex pattern (contains regex metacharacters),
-	// it will be compiled and used for pattern matching. Otherwise, exact
-	// string matching is used.
-	Name string `json:"name,omitempty"`
+	// Pattern is the regex pattern to match against the certificate field.
+	// Required. Use anchors (^, $) for exact matches, e.g., "^exact\.match$"
+	Pattern string `json:"pattern"`
+
+	// Field specifies which certificate field to match against.
+	// Valid values: "subject" (default), "issuer", "serial", "dns_names"
+	Field string `json:"field,omitempty"`
 
 	// Location specifies which certificate store to use.
 	// On Windows: "user" (CurrentUser) or "machine" (LocalMachine)
 	// On macOS: "user" or "system" (no effect - Keychain searches both automatically)
 	Location string `json:"location,omitempty"`
-
-	// Issuer is the common name of ceritifcate authority that issued the certificate to be loaded,
-	// only exact matches are supported.
-	Issuer string `json:"issuer,omitempty"`
 
 	// runtime resources kept for cleanup (unexported, not serialized)
 	cacheKey string
@@ -50,7 +48,7 @@ func (cs *CertSelector) loadCertificateWithResources() (tls.Certificate, certsto
 		return cert, nil, nil, err
 	}
 
-	identity, err := findMatchingIdentity(identities, cs.Issuer, cs.Name, cs.pattern)
+	identity, err := findMatchingIdentity(identities, cs.pattern, cs.Field)
 	if err != nil {
 		store.Close()
 		return cert, nil, nil, fmt.Errorf("%w in %s store", err, cs.Location)
