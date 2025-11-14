@@ -45,7 +45,7 @@
                   "transport": {
                     "protocol": "certstore",
                     "client_certificate": {
-                      "name": "test.caddycertstore.local",
+                      "pattern": "^test.caddycertstore.local$",
                       "location": "user"
                     },
                     "tls": {
