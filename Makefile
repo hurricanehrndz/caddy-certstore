@@ -2,8 +2,6 @@
 .PHONY: lint
 lint:
 	@pre-commit run --all-files
-	@go tool -modfile=tools.mod golangci-lint run
-	@go tool -modfile=tools.mod govulncheck ./...
 
 .PHONY: format
 format:

@@ -11,3 +11,17 @@ repos:
     hooks:
       - id: yamlfmt
         types: [yaml]
+  - repo: local
+    hooks:
+      - id: golangci-lint
+        name: golangci-lint
+        entry: go tool -modfile=tools.mod golangci-lint run
+        language: system
+        types: [go]
+        pass_filenames: false
+      - id: govulncheck
+        name: govulncheck
+        entry: go tool -modfile=tools.mod govulncheck ./...
+        language: system
+        types: [go]
+        pass_filenames: false
