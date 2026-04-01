@@ -1,6 +1,6 @@
 module github.com/hurricanehrndz/caddy-certstore
 
-go 1.25.3
+go 1.26.1
 
 require (
 	github.com/caddyserver/caddy/v2 v2.11.2
