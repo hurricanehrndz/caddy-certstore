@@ -5,7 +5,7 @@ go 1.26.1
 require (
 	github.com/caddyserver/caddy/v2 v2.11.2
 	github.com/tailscale/certstore v0.1.1-0.20231202035212-d3fa0460f47e
-	go.uber.org/zap v1.27.1
+	go.uber.org/zap v1.28.0
 )
 
 require (
