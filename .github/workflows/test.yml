@@ -15,16 +15,18 @@ jobs:
     runs-on: macos-latest
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Install Nix
         uses: cachix/install-nix-action@v31
-        with:
-          extra_nix_config: |
-            accept-flake-config = true
 
-      - name: Set up devenv
-        uses: cachix/devenv-action@v1
+      - name: Set up Cachix
+        uses: cachix/cachix-action@v16
+        with:
+          name: devenv
+
+      - name: Install devenv
+        run: nix profile add nixpkgs#devenv
 
       - name: Run git hooks
         run: devenv tasks run devenv:git-hooks:run
@@ -54,18 +56,21 @@ jobs:
         os: [macos-latest, windows-latest]
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Install Nix
         if: runner.os == 'macOS'
         uses: cachix/install-nix-action@v31
-        with:
-          extra_nix_config: |
-            accept-flake-config = true
 
-      - name: Set up devenv
+      - name: Set up Cachix
         if: runner.os == 'macOS'
-        uses: cachix/devenv-action@v1
+        uses: cachix/cachix-action@v16
+        with:
+          name: devenv
+
+      - name: Install devenv
+        if: runner.os == 'macOS'
+        run: nix profile add nixpkgs#devenv
 
       - name: Set up Go
         if: runner.os == 'Windows'
