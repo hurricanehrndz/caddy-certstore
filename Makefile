@@ -1,11 +1,10 @@
-# update go get -tool -modfile=tools.mod github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest
 .PHONY: lint
 lint:
-	@pre-commit run --all-files
+	@devenv tasks run devenv:git-hooks:run
 
 .PHONY: format
 format:
-	@go tool -modfile=tools.mod golangci-lint fmt
+	@devenv tasks run devenv:treefmt:run
 
 .PHONY: test
 test:
@@ -14,10 +13,10 @@ test:
 caddy: build/darwin/caddy
 build/darwin/caddy:
 	test -f $(@D) || mkdir -p $(@D)
-	CGO_ENABLED=1 go tool -modfile=tools.mod xcaddy build \
+	CGO_ENABLED=1 xcaddy build \
 		--output $(@) \
 		--with github.com/hurricanehrndz/caddy-certstore=.
 
 .PHONY: install-hooks
 install-hooks:
-	@pre-commit install --install-hooks
+	@devenv tasks run devenv:git-hooks:install
