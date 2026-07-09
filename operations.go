@@ -97,7 +97,7 @@ func buildTLSCertificate(identity certstore.Identity) (tls.Certificate, error) {
 
 // serializeCertificateChain converts a certificate chain to raw DER format.
 func serializeCertificateChain(chain []*x509.Certificate) [][]byte {
-	out := [][]byte{}
+	out := make([][]byte, 0, len(chain))
 	for _, cert := range chain {
 		out = append(out, cert.Raw)
 	}

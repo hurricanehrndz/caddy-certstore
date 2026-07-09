@@ -15,23 +15,21 @@ jobs:
     runs-on: macos-latest
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
-      - name: Set up Go
-        uses: actions/setup-go@v5
+      - name: Install Nix
+        uses: cachix/install-nix-action@v31
+
+      - name: Set up Cachix
+        uses: cachix/cachix-action@v16
         with:
-          go-version-file: '.go-version'
-          cache: true
+          name: devenv
 
-      - name: Download dependencies
-        run: go mod download
+      - name: Install devenv
+        run: nix profile add nixpkgs#devenv
 
-      - name: Download tools
-        run: go mod download -modfile=tools.mod
-
-      - uses: actions/setup-python@v3
-
-      - uses: pre-commit/action@v3.0.1
+      - name: Run git hooks
+        run: devenv tasks run devenv:git-hooks:run
 
       - name: Check formatting
         run: |
@@ -44,8 +42,8 @@ jobs:
 
       - name: Verify dependencies
         run: |
-          go mod verify
-          go mod tidy
+          devenv shell -- go mod verify
+          devenv shell -- go mod tidy
           git diff --exit-code go.mod go.sum
 
   # Platform integration tests
@@ -58,27 +56,50 @@ jobs:
         os: [macos-latest, windows-latest]
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
+
+      - name: Install Nix
+        if: runner.os == 'macOS'
+        uses: cachix/install-nix-action@v31
+
+      - name: Set up Cachix
+        if: runner.os == 'macOS'
+        uses: cachix/cachix-action@v16
+        with:
+          name: devenv
+
+      - name: Install devenv
+        if: runner.os == 'macOS'
+        run: nix profile add nixpkgs#devenv
 
       - name: Set up Go
+        if: runner.os == 'Windows'
         uses: actions/setup-go@v5
         with:
           go-version-file: '.go-version'
           cache: true
 
-      - name: Download dependencies
+      - name: Download dependencies (Windows)
+        if: runner.os == 'Windows'
         run: go mod download
+
+      - name: Download dependencies (macOS)
+        if: runner.os == 'macOS'
+        run: devenv shell -- go mod download
 
       - name: Run all tests (including integration)
         shell: bash
-        run: go test -v -race -coverprofile=coverage.txt -covermode=atomic ./...
+        run: |
+          if [ "${{ runner.os }}" = "macOS" ]; then
+            devenv shell -- go test -v -race -coverprofile=coverage.txt -covermode=atomic ./...
+          else
+            go test -v -race -coverprofile=coverage.txt -covermode=atomic ./...
+          fi
 
       - name: Build Caddy with module
         if: runner.os == 'macOS'
         shell: bash
-        run: |
-          go install github.com/caddyserver/xcaddy/cmd/xcaddy@latest
-          CGO_ENABLED=1 xcaddy build --output ./caddy --with github.com/hurricanehrndz/caddy-certstore=.
+        run: devenv shell -- make caddy
 
       - name: Import test certificate (macOS)
         if: runner.os == 'macOS'
@@ -93,8 +114,7 @@ jobs:
       - name: Validate test configuration
         if: runner.os == 'macOS'
         shell: bash
-        run: |
-          ./caddy validate --config testdata/test-config.json
+        run: devenv shell -- ./build/darwin/caddy validate --config testdata/test-config.json
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v5

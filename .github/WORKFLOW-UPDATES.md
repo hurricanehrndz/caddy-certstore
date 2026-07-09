@@ -37,19 +37,16 @@ strategy:
   run: govulncheck ./...
 ```
 
-**After**: Use Makefile command
+**After**: Use devenv git-hooks
 ```yaml
-- name: Download tools
-  run: go mod download -modfile=tools.mod
-
-- name: Run make lint
-  run: make lint
+- name: Run git hooks
+  run: devenv tasks run devenv:git-hooks:run
 ```
 
 **Benefits**:
 - Consistent with local development
 - Single command for all linting
-- Uses tools from `tools.mod`
+- Uses tools from `devenv.nix`
 - Includes both golangci-lint and govulncheck
 
 ### ✅ 3. Formatting Integration
