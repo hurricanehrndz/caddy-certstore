@@ -66,6 +66,7 @@ func (h *HTTPTransport) Provision(ctx caddy.Context) error {
 
 	h.ClientCert.Pattern = repl.ReplaceKnown(h.ClientCert.Pattern, "")
 	h.ClientCert.Field = repl.ReplaceKnown(h.ClientCert.Field, "")
+	h.ClientCert.Location = repl.ReplaceKnown(h.ClientCert.Location, "")
 
 	// Compile regex pattern
 	var err error

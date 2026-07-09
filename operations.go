@@ -10,6 +10,8 @@ import (
 	"github.com/tailscale/certstore"
 )
 
+var openCertStore = certstore.Open
+
 // getStoreLocation converts a string location to certstore.StoreLocation.
 func getStoreLocation(location string) certstore.StoreLocation {
 	switch strings.ToLower(location) {
