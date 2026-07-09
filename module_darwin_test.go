@@ -25,7 +25,8 @@ func importTestCertificate(t *testing.T) {
 	}
 
 	// Import certificate into login keychain using security tool
-	cmd := exec.Command("security", "import", p12Path,
+	cmd := exec.Command(
+		"security", "import", p12Path,
 		"-k", os.Getenv("HOME")+"/Library/Keychains/login.keychain-db",
 		"-P", testCertPass,
 		"-T", "/usr/bin/codesign",
@@ -52,7 +53,8 @@ func importTestCertificate(t *testing.T) {
 func removeTestCertificate(t *testing.T) {
 	t.Helper()
 
-	cmd := exec.Command("security", "delete-certificate",
+	cmd := exec.Command(
+		"security", "delete-certificate",
 		"-c", testCertCN,
 		os.Getenv("HOME")+"/Library/Keychains/login.keychain-db",
 	)

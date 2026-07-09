@@ -62,7 +62,8 @@ func (cs *CertSelector) getCachedCertificate() (tls.Certificate, string, error) 
 		atomic.AddInt32(&cached.refCount, 1)
 
 		if cs.logger != nil {
-			cs.logger.Debug("reusing cached certificate",
+			cs.logger.Debug(
+				"reusing cached certificate",
 				zap.String("cache_key", cacheKey[:16]),
 				zap.Int32("ref_count", atomic.LoadInt32(&cached.refCount)),
 			)
@@ -82,7 +83,8 @@ func (cs *CertSelector) getCachedCertificate() (tls.Certificate, string, error) 
 	certCache[cacheKey] = cached
 
 	if cs.logger != nil {
-		cs.logger.Debug("cached new certificate",
+		cs.logger.Debug(
+			"cached new certificate",
 			zap.String("cache_key", cacheKey[:16]),
 			zap.String("common_name", cert.Leaf.Subject.CommonName),
 		)

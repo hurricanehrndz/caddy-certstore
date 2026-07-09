@@ -62,7 +62,8 @@ func (cs *CertSelector) loadCertificateWithResources() (tls.Certificate, certsto
 			if issuer == "" {
 				issuer = certInfo.Issuer.String()
 			}
-			cs.logger.Info("loaded client certificate from OS certificate store",
+			cs.logger.Info(
+				"loaded client certificate from OS certificate store",
 				zap.String("common_name", certInfo.Subject.CommonName),
 				zap.String("issuer", issuer),
 				zap.String("serial_number", certInfo.SerialNumber.String()),

@@ -57,6 +57,8 @@
       enable = true;
       package = pkgs.govulncheck;
       entry = "${lib.getExe pkgs.govulncheck} ./...";
+      # TODO: move back to pre-commit when nixpkgs ships Go 1.26.5.
+      stages = [ "manual" ];
       pass_filenames = false;
       types = [ "go" ];
     };
