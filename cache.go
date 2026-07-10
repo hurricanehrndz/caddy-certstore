@@ -128,6 +128,13 @@ func (cs *CertSelector) getCachedCertificate() (tls.Certificate, string, error) 
 	return currentCert, cacheKey, nil
 }
 
+func (cs *CertSelector) currentCertificate() (tls.Certificate, error) {
+	if cs.cacheEntry == nil {
+		return tls.Certificate{}, fmt.Errorf("client certificate cache entry is not initialized")
+	}
+	return cs.cacheEntry.currentCertificate()
+}
+
 func (cached *cachedCert) currentCertificate() (tls.Certificate, error) {
 	cached.mu.RLock()
 	defer cached.mu.RUnlock()

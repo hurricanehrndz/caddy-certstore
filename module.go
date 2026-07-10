@@ -76,7 +76,7 @@ func (h *HTTPTransport) Provision(ctx caddy.Context) error {
 	}
 
 	// Load certificate from cache (or load and cache it)
-	clientCert, err := h.ClientCert.loadCertificate()
+	_, err = h.ClientCert.loadCertificate()
 	if err != nil {
 		return fmt.Errorf("no client certificate found in: %s matching pattern: %s", h.ClientCert.Location, h.ClientCert.Pattern)
 	}
@@ -84,9 +84,22 @@ func (h *HTTPTransport) Provision(ctx caddy.Context) error {
 	if h.Transport.TLSClientConfig == nil {
 		h.Transport.TLSClientConfig = new(tls.Config)
 	}
-	h.Transport.TLSClientConfig.Certificates = []tls.Certificate{clientCert}
+	h.Transport.TLSClientConfig.GetClientCertificate = h.getClientCertificate
 
 	return nil
+}
+
+func (h *HTTPTransport) getClientCertificate(cri *tls.CertificateRequestInfo) (*tls.Certificate, error) {
+	cert, err := h.ClientCert.currentCertificate()
+	if err != nil {
+		return nil, err
+	}
+	if cri != nil {
+		if err := cri.SupportsCertificate(&cert); err != nil {
+			return new(tls.Certificate), nil
+		}
+	}
+	return &cert, nil
 }
 
 // Cleanup implements caddy.CleanerUpper. It closes any idle connections
