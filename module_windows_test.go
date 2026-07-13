@@ -9,7 +9,8 @@ import (
 	"testing"
 )
 
-// importTestCertificate imports the test certificate from testdata into user certificate store
+// importTestCertificate imports the test certificate from testdata into user certificate store.
+// Full tests touch Cert:\CurrentUser\My and cleanup removes only the exact test PFX thumbprint.
 func importTestCertificate(t *testing.T) {
 	t.Helper()
 
@@ -46,15 +47,23 @@ func importTestCertificate(t *testing.T) {
 	t.Logf("Certificate import result: %s", output)
 }
 
-// removeTestCertificate removes the test certificate from user certificate store
+// removeTestCertificate removes only the exact test certificate from user certificate store.
 func removeTestCertificate(t *testing.T) {
 	t.Helper()
 
+	pfxPath, err := filepath.Abs(testCertP12)
+	if err != nil {
+		t.Logf("Failed to get absolute test certificate path during cleanup: %v", err)
+		return
+	}
+
 	psScript := `
-		$certs = Get-ChildItem -Path Cert:\CurrentUser\My | Where-Object { $_.Subject -like "*` + testCertCN + `*" }
-		foreach ($cert in $certs) {
-			Remove-Item -Path "Cert:\CurrentUser\My\$($cert.Thumbprint)" -Force
-			Write-Output "Removed certificate: $($cert.Thumbprint)"
+		$password = ConvertTo-SecureString -String "` + testCertPass + `" -AsPlainText -Force
+		$expected = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2("` + pfxPath + `", $password)
+		$cert = Get-ChildItem -Path Cert:\CurrentUser\My | Where-Object { $_.Thumbprint -eq $expected.Thumbprint }
+		if ($cert) {
+			Remove-Item -Path "Cert:\CurrentUser\My\$($expected.Thumbprint)" -Force
+			Write-Output "Removed test certificate: $($expected.Thumbprint)"
 		}
 	`
 

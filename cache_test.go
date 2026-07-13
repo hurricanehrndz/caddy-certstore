@@ -1,197 +1,437 @@
 package certstore
 
 import (
-	"crypto/tls"
+	"crypto"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	crand "crypto/rand"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"fmt"
+	"io"
+	"math/big"
 	"regexp"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/tailscale/certstore"
 )
 
-func TestCertificateCache_ConcurrentAccess(t *testing.T) {
-	// Import test certificate
-	importTestCertificate(t)
-	defer removeTestCertificate(t)
+func TestCertificateCache_SelectorAwareReuseAndRefCounting(t *testing.T) {
+	resetCertificateCache(t)
 
-	// Clear cache before test
-	cacheMutex.Lock()
-	certCache = make(map[string]*cachedCert)
-	cacheMutex.Unlock()
+	key := newTestKey(t)
+	cert := newTestCertificate(t, "cache.example.test", key)
+	loads := []*fakeStoreLoad{
+		newFakeStoreLoad(cert, newFakeSigner(key.Public(), []byte("first"))),
+		newFakeStoreLoad(cert, newFakeSigner(key.Public(), []byte("reused"))),
+		newFakeStoreLoad(cert, newFakeSigner(key.Public(), []byte("separate"))),
+	}
+	provider := withFakeStoreLoads(t, loads...)
 
-	// Create multiple selectors with different patterns that match the same cert
-	selectors := []*CertSelector{
-		{Pattern: "^" + testCertCN + "$", Location: "user"},
-		{Pattern: "test\\..*\\.local", Location: "user"},
-		{Pattern: ".*caddycertstore.*", Location: "user"},
+	selectorA := newTestSelector("^cache\\.example\\.test$")
+	selectorB := newTestSelector("^cache\\.example\\.test$")
+	selectorC := newTestSelector("cache\\.example\\..*")
+
+	_, cacheKeyA, err := selectorA.getCachedCertificate()
+	if err != nil {
+		t.Fatalf("first selector load failed: %v", err)
+	}
+	_, cacheKeyB, err := selectorB.getCachedCertificate()
+	if err != nil {
+		t.Fatalf("identical selector load failed: %v", err)
+	}
+	_, cacheKeyC, err := selectorC.getCachedCertificate()
+	if err != nil {
+		t.Fatalf("different selector load failed: %v", err)
 	}
 
-	// Compile patterns for all selectors
-	for _, sel := range selectors {
-		var err error
-		sel.pattern, err = regexp.Compile(sel.Pattern)
-		if err != nil {
-			t.Fatalf("Failed to compile pattern: %v", err)
-		}
+	if cacheKeyA != cacheKeyB {
+		t.Fatalf("identical selectors should share cache key: %s != %s", cacheKeyA, cacheKeyB)
+	}
+	if cacheKeyA == cacheKeyC {
+		t.Fatal("different selectors matching the same leaf should not share mutable cache entries")
+	}
+	if provider.openCount() != 3 {
+		t.Fatalf("expected each lookup to load once for cache-key calculation, got %d opens", provider.openCount())
+	}
+	if loads[1].identity.closeCount() != 1 || loads[1].store.closeCount() != 1 {
+		t.Fatalf("reused lookup resources should be closed immediately, got identity=%d store=%d", loads[1].identity.closeCount(), loads[1].store.closeCount())
 	}
 
-	var wg sync.WaitGroup
-	results := make([]struct {
-		cert     tls.Certificate
-		cacheKey string
-		err      error
-	}, len(selectors))
-
-	// Load certificates concurrently
-	for i, sel := range selectors {
-		wg.Add(1)
-		go func(idx int, selector *CertSelector) {
-			defer wg.Done()
-
-			// Small delay to increase concurrency likelihood
-			time.Sleep(time.Millisecond * 10)
-
-			cert, key, err := selector.getCachedCertificate()
-			results[idx].cert = cert
-			results[idx].cacheKey = key
-			results[idx].err = err
-		}(i, sel)
-	}
-
-	wg.Wait()
-
-	// Verify all loads succeeded
-	for i, result := range results {
-		if result.err != nil {
-			t.Errorf("Selector %d failed to load: %v", i, result.err)
-		}
-	}
-
-	// All selectors should have the same cache key (same certificate)
-	firstKey := results[0].cacheKey
-	for i := 1; i < len(results); i++ {
-		if results[i].cacheKey != firstKey {
-			t.Errorf("Cache key mismatch: selector 0 has %s, selector %d has %s",
-				firstKey[:16], i, results[i].cacheKey[:16])
-		}
-	}
-
-	// Verify only one certificate is cached
 	cacheMutex.Lock()
 	cacheSize := len(certCache)
+	sharedRefCount := atomic.LoadInt32(&certCache[cacheKeyA].refCount)
+	separateRefCount := atomic.LoadInt32(&certCache[cacheKeyC].refCount)
 	cacheMutex.Unlock()
 
-	if cacheSize != 1 {
-		t.Errorf("Expected 1 cached certificate, got %d", cacheSize)
+	if cacheSize != 2 {
+		t.Fatalf("expected 2 selector-aware cache entries, got %d", cacheSize)
+	}
+	if sharedRefCount != 2 {
+		t.Fatalf("expected shared refCount=2, got %d", sharedRefCount)
+	}
+	if separateRefCount != 1 {
+		t.Fatalf("expected separate refCount=1, got %d", separateRefCount)
 	}
 
-	// Verify reference count
-	cacheMutex.Lock()
-	cached := certCache[firstKey]
-	refCount := atomic.LoadInt32(&cached.refCount)
-	cacheMutex.Unlock()
-
-	expectedRefCount := int32(len(selectors))
-	if refCount != expectedRefCount {
-		t.Errorf("Expected refCount=%d, got %d", expectedRefCount, refCount)
+	releaseCachedCertificate(cacheKeyA)
+	if loads[0].identity.closeCount() != 0 || loads[0].store.closeCount() != 0 {
+		t.Fatal("active shared resources closed before final release")
 	}
 
-	// Cleanup all references
-	for _, result := range results {
-		releaseCachedCertificate(result.cacheKey)
+	releaseCachedCertificate(cacheKeyB)
+	if loads[0].identity.closeCount() != 1 || loads[0].store.closeCount() != 1 {
+		t.Fatalf("shared resources should close exactly once after final release, got identity=%d store=%d", loads[0].identity.closeCount(), loads[0].store.closeCount())
 	}
 
-	// Verify cache is empty after cleanup
+	releaseCachedCertificate(cacheKeyC)
+	if loads[2].identity.closeCount() != 1 || loads[2].store.closeCount() != 1 {
+		t.Fatalf("separate resources should close exactly once, got identity=%d store=%d", loads[2].identity.closeCount(), loads[2].store.closeCount())
+	}
+
 	cacheMutex.Lock()
 	cacheSize = len(certCache)
 	cacheMutex.Unlock()
-
 	if cacheSize != 0 {
-		t.Errorf("Expected empty cache after cleanup, got %d entries", cacheSize)
+		t.Fatalf("expected empty cache after cleanup, got %d entries", cacheSize)
 	}
 }
 
-func TestCertificateCache_RefCounting(t *testing.T) {
-	// Import test certificate
-	importTestCertificate(t)
-	defer removeTestCertificate(t)
+func TestCachedCertificateRefresh_SameKeySwapsResources(t *testing.T) {
+	resetCertificateCache(t)
 
-	// Clear cache before test
+	key := newTestKey(t)
+	initialCert := newTestCertificate(t, "refresh.example.test", key)
+	refreshedCert := newTestCertificate(t, "refresh.example.test", key)
+	loads := []*fakeStoreLoad{
+		newFakeStoreLoad(initialCert, newFakeSignerWithErrors(key.Public(), nil, errStaleSigner)),
+		newFakeStoreLoad(refreshedCert, newFakeSigner(key.Public(), []byte("refreshed-signature"))),
+	}
+	withFakeStoreLoads(t, loads...)
+
+	selector := newTestSelector("^refresh\\.example\\.test$")
+	cert, cacheKey, err := selector.getCachedCertificate()
+	if err != nil {
+		t.Fatalf("load failed: %v", err)
+	}
+
+	sig, err := cert.PrivateKey.(crypto.Signer).Sign(crand.Reader, []byte("digest"), crypto.SHA256)
+	if err != nil {
+		t.Fatalf("expected same-key refresh retry to succeed: %v", err)
+	}
+	if string(sig) != "refreshed-signature" {
+		t.Fatalf("expected refreshed signature, got %q", sig)
+	}
+	if loads[0].identity.closeCount() != 1 || loads[0].store.closeCount() != 1 {
+		t.Fatalf("old resources should close after refresh, got identity=%d store=%d", loads[0].identity.closeCount(), loads[0].store.closeCount())
+	}
+	if loads[1].identity.closeCount() != 0 || loads[1].store.closeCount() != 0 {
+		t.Fatal("refreshed resources closed before cache release")
+	}
+
+	current, err := selector.cacheEntry.currentCertificate()
+	if err != nil {
+		t.Fatalf("current certificate failed: %v", err)
+	}
+	if current.Leaf.SerialNumber.Cmp(refreshedCert.SerialNumber) != 0 {
+		t.Fatalf("expected current leaf serial %s, got %s", refreshedCert.SerialNumber, current.Leaf.SerialNumber)
+	}
+
+	releaseCachedCertificate(cacheKey)
+	if loads[1].identity.closeCount() != 1 || loads[1].store.closeCount() != 1 {
+		t.Fatalf("refreshed resources should close exactly once on release, got identity=%d store=%d", loads[1].identity.closeCount(), loads[1].store.closeCount())
+	}
+}
+
+func TestRefreshingSigner(t *testing.T) {
+	t.Run("first sign success does not refresh", func(t *testing.T) {
+		resetCertificateCache(t)
+
+		key := newTestKey(t)
+		cert := newTestCertificate(t, "sign.example.test", key)
+		provider := withFakeStoreLoads(t, newFakeStoreLoad(cert, newFakeSigner(key.Public(), []byte("ok"))))
+
+		selector := newTestSelector("^sign\\.example\\.test$")
+		loadedCert, cacheKey, err := selector.getCachedCertificate()
+		if err != nil {
+			t.Fatalf("load failed: %v", err)
+		}
+
+		sig, err := loadedCert.PrivateKey.(crypto.Signer).Sign(crand.Reader, []byte("digest"), crypto.SHA256)
+		if err != nil {
+			t.Fatalf("sign failed: %v", err)
+		}
+		if string(sig) != "ok" {
+			t.Fatalf("unexpected signature %q", sig)
+		}
+		if provider.openCount() != 1 {
+			t.Fatalf("expected no refresh loads, got %d opens", provider.openCount())
+		}
+
+		releaseCachedCertificate(cacheKey)
+	})
+
+	t.Run("refresh load failure preserves original signing error", func(t *testing.T) {
+		resetCertificateCache(t)
+
+		key := newTestKey(t)
+		cert := newTestCertificate(t, "refresh-failure.example.test", key)
+		loads := []*fakeStoreLoad{
+			newFakeStoreLoad(cert, newFakeSignerWithErrors(key.Public(), nil, errStaleSigner)),
+			{openErr: errRefreshLoad},
+		}
+		withFakeStoreLoads(t, loads...)
+
+		selector := newTestSelector("^refresh-failure\\.example\\.test$")
+		loadedCert, cacheKey, err := selector.getCachedCertificate()
+		if err != nil {
+			t.Fatalf("load failed: %v", err)
+		}
+
+		_, err = loadedCert.PrivateKey.(crypto.Signer).Sign(crand.Reader, []byte("digest"), crypto.SHA256)
+		assertErrorContains(t, err, "refresh failed", errStaleSigner.Error(), errRefreshLoad.Error())
+
+		releaseCachedCertificate(cacheKey)
+	})
+
+	t.Run("retry failure preserves original and retry errors", func(t *testing.T) {
+		resetCertificateCache(t)
+
+		key := newTestKey(t)
+		initialCert := newTestCertificate(t, "retry-failure.example.test", key)
+		refreshedCert := newTestCertificate(t, "retry-failure.example.test", key)
+		loads := []*fakeStoreLoad{
+			newFakeStoreLoad(initialCert, newFakeSignerWithErrors(key.Public(), nil, errStaleSigner)),
+			newFakeStoreLoad(refreshedCert, newFakeSignerWithErrors(key.Public(), nil, errRetrySigner)),
+		}
+		withFakeStoreLoads(t, loads...)
+
+		selector := newTestSelector("^retry-failure\\.example\\.test$")
+		loadedCert, cacheKey, err := selector.getCachedCertificate()
+		if err != nil {
+			t.Fatalf("load failed: %v", err)
+		}
+
+		_, err = loadedCert.PrivateKey.(crypto.Signer).Sign(crand.Reader, []byte("digest"), crypto.SHA256)
+		assertErrorContains(t, err, "retry failed", errStaleSigner.Error(), errRetrySigner.Error())
+
+		releaseCachedCertificate(cacheKey)
+	})
+
+	t.Run("different key rotation refreshes cache for future handshakes", func(t *testing.T) {
+		resetCertificateCache(t)
+
+		initialKey := newTestKey(t)
+		refreshedKey := newTestKey(t)
+		initialCert := newTestCertificate(t, "rotation.example.test", initialKey)
+		refreshedCert := newTestCertificate(t, "rotation.example.test", refreshedKey)
+		loads := []*fakeStoreLoad{
+			newFakeStoreLoad(initialCert, newFakeSignerWithErrors(initialKey.Public(), nil, errStaleSigner)),
+			newFakeStoreLoad(refreshedCert, newFakeSigner(refreshedKey.Public(), []byte("future"))),
+		}
+		withFakeStoreLoads(t, loads...)
+
+		selector := newTestSelector("^rotation\\.example\\.test$")
+		loadedCert, cacheKey, err := selector.getCachedCertificate()
+		if err != nil {
+			t.Fatalf("load failed: %v", err)
+		}
+
+		_, err = loadedCert.PrivateKey.(crypto.Signer).Sign(crand.Reader, []byte("digest"), crypto.SHA256)
+		assertErrorContains(t, err, "cache refreshed for future handshakes", "cannot be retried safely", errStaleSigner.Error())
+
+		current, err := selector.cacheEntry.currentCertificate()
+		if err != nil {
+			t.Fatalf("current certificate failed: %v", err)
+		}
+		if current.Leaf.SerialNumber.Cmp(refreshedCert.SerialNumber) != 0 {
+			t.Fatalf("expected future handshakes to see refreshed serial %s, got %s", refreshedCert.SerialNumber, current.Leaf.SerialNumber)
+		}
+
+		releaseCachedCertificate(cacheKey)
+	})
+}
+
+var (
+	errStaleSigner = fmt.Errorf("stale signer")
+	errRefreshLoad = fmt.Errorf("refresh load failed")
+	errRetrySigner = fmt.Errorf("retry signer failed")
+	testSerial     int64
+)
+
+func resetCertificateCache(t *testing.T) {
+	t.Helper()
+
 	cacheMutex.Lock()
 	certCache = make(map[string]*cachedCert)
 	cacheMutex.Unlock()
+}
 
-	selector := &CertSelector{
-		Pattern:  "^" + testCertCN + "$",
-		Location: "user",
+func withFakeStoreLoads(t *testing.T, loads ...*fakeStoreLoad) *fakeStoreProvider {
+	t.Helper()
+
+	provider := &fakeStoreProvider{loads: loads}
+	oldOpen := openCertStore
+	openCertStore = provider.open
+	t.Cleanup(func() {
+		openCertStore = oldOpen
+	})
+	return provider
+}
+
+type fakeStoreProvider struct {
+	mu    sync.Mutex
+	loads []*fakeStoreLoad
+	opens int
+}
+
+func (p *fakeStoreProvider) open(certstore.StoreLocation, ...certstore.StorePermission) (certstore.Store, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	if p.opens >= len(p.loads) {
+		return nil, fmt.Errorf("unexpected certificate store open #%d", p.opens+1)
 	}
-
-	// Compile pattern
-	var err error
-	selector.pattern, err = regexp.Compile(selector.Pattern)
-	if err != nil {
-		t.Fatalf("Failed to compile pattern: %v", err)
+	load := p.loads[p.opens]
+	p.opens++
+	if load.openErr != nil {
+		return nil, load.openErr
 	}
+	return load.store, nil
+}
 
-	// Load certificate 3 times
-	var cacheKeys []string
-	for i := range 3 {
-		_, key, err := selector.getCachedCertificate()
+func (p *fakeStoreProvider) openCount() int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.opens
+}
+
+type fakeStoreLoad struct {
+	store    *fakeStore
+	identity *fakeIdentity
+	openErr  error
+}
+
+func newFakeStoreLoad(cert *x509.Certificate, signer crypto.Signer) *fakeStoreLoad {
+	identity := &fakeIdentity{cert: cert, signer: signer}
+	store := &fakeStore{identities: []certstore.Identity{identity}}
+	return &fakeStoreLoad{store: store, identity: identity}
+}
+
+type fakeStore struct {
+	identities []certstore.Identity
+	closed     int32
+}
+
+func (s *fakeStore) Identities() ([]certstore.Identity, error) { return s.identities, nil }
+func (s *fakeStore) Import([]byte, string) error               { return nil }
+func (s *fakeStore) Close()                                    { atomic.AddInt32(&s.closed, 1) }
+func (s *fakeStore) closeCount() int32                         { return atomic.LoadInt32(&s.closed) }
+
+type fakeIdentity struct {
+	cert   *x509.Certificate
+	signer crypto.Signer
+	closed int32
+}
+
+func (i *fakeIdentity) Certificate() (*x509.Certificate, error) { return i.cert, nil }
+func (i *fakeIdentity) CertificateChain() ([]*x509.Certificate, error) {
+	return []*x509.Certificate{i.cert}, nil
+}
+func (i *fakeIdentity) Signer() (crypto.Signer, error) { return i.signer, nil }
+func (i *fakeIdentity) Delete() error                  { return nil }
+func (i *fakeIdentity) Close()                         { atomic.AddInt32(&i.closed, 1) }
+func (i *fakeIdentity) closeCount() int32              { return atomic.LoadInt32(&i.closed) }
+
+type fakeSigner struct {
+	public crypto.PublicKey
+	sig    []byte
+
+	mu     sync.Mutex
+	errors []error
+}
+
+func newFakeSigner(public crypto.PublicKey, sig []byte) *fakeSigner {
+	return &fakeSigner{public: public, sig: sig}
+}
+
+func newFakeSignerWithErrors(public crypto.PublicKey, sig []byte, errors ...error) *fakeSigner {
+	return &fakeSigner{public: public, sig: sig, errors: errors}
+}
+
+func (s *fakeSigner) Public() crypto.PublicKey { return s.public }
+
+func (s *fakeSigner) Sign(io.Reader, []byte, crypto.SignerOpts) ([]byte, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if len(s.errors) > 0 {
+		err := s.errors[0]
+		s.errors = s.errors[1:]
 		if err != nil {
-			t.Fatalf("Failed to load certificate (iteration %d): %v", i, err)
-		}
-		cacheKeys = append(cacheKeys, key)
-	}
-
-	// Verify all keys are the same
-	for i := 1; i < len(cacheKeys); i++ {
-		if cacheKeys[i] != cacheKeys[0] {
-			t.Errorf("Cache key mismatch at iteration %d", i)
+			return nil, err
 		}
 	}
+	return append([]byte(nil), s.sig...), nil
+}
 
-	// Verify reference count is 3
-	cacheMutex.Lock()
-	cached := certCache[cacheKeys[0]]
-	refCount := atomic.LoadInt32(&cached.refCount)
-	cacheMutex.Unlock()
+func newTestSelector(pattern string) *CertSelector {
+	return &CertSelector{
+		Pattern:  pattern,
+		Location: "user",
+		pattern:  regexp.MustCompile(pattern),
+	}
+}
 
-	if refCount != 3 {
-		t.Errorf("Expected refCount=3, got %d", refCount)
+func newTestKey(t *testing.T) *ecdsa.PrivateKey {
+	t.Helper()
+
+	key, err := ecdsa.GenerateKey(elliptic.P256(), crand.Reader)
+	if err != nil {
+		t.Fatalf("generate key: %v", err)
+	}
+	return key
+}
+
+func newTestCertificate(t *testing.T, commonName string, key *ecdsa.PrivateKey) *x509.Certificate {
+	t.Helper()
+
+	serial := atomic.AddInt64(&testSerial, 1)
+	template := &x509.Certificate{
+		SerialNumber: big.NewInt(serial),
+		Subject: pkix.Name{
+			CommonName: commonName,
+		},
+		NotBefore: time.Now().Add(-time.Hour),
+		NotAfter:  time.Now().Add(time.Hour),
+		KeyUsage:  x509.KeyUsageDigitalSignature,
 	}
 
-	// Release 2 references
-	releaseCachedCertificate(cacheKeys[0])
-	releaseCachedCertificate(cacheKeys[1])
-
-	// Verify reference count is 1
-	cacheMutex.Lock()
-	cached = certCache[cacheKeys[0]]
-	refCount = atomic.LoadInt32(&cached.refCount)
-	cacheMutex.Unlock()
-
-	if refCount != 1 {
-		t.Errorf("Expected refCount=1 after 2 releases, got %d", refCount)
+	der, err := x509.CreateCertificate(crand.Reader, template, template, key.Public(), key)
+	if err != nil {
+		t.Fatalf("create certificate: %v", err)
 	}
-
-	// Verify certificate still in cache
-	cacheMutex.Lock()
-	cacheSize := len(certCache)
-	cacheMutex.Unlock()
-
-	if cacheSize != 1 {
-		t.Errorf("Expected 1 cached certificate, got %d", cacheSize)
+	cert, err := x509.ParseCertificate(der)
+	if err != nil {
+		t.Fatalf("parse certificate: %v", err)
 	}
+	return cert
+}
 
-	// Release last reference
-	releaseCachedCertificate(cacheKeys[2])
+func assertErrorContains(t *testing.T, err error, parts ...string) {
+	t.Helper()
 
-	// Verify cache is now empty
-	cacheMutex.Lock()
-	cacheSize = len(certCache)
-	cacheMutex.Unlock()
-
-	if cacheSize != 0 {
-		t.Errorf("Expected empty cache after final release, got %d entries", cacheSize)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	message := err.Error()
+	for _, part := range parts {
+		if !strings.Contains(message, part) {
+			t.Fatalf("expected error %q to contain %q", message, part)
+		}
 	}
 }

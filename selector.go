@@ -4,6 +4,7 @@ import (
 	"crypto/tls"
 	"fmt"
 	"regexp"
+	"strings"
 
 	"github.com/tailscale/certstore"
 	"go.uber.org/zap"
@@ -25,19 +26,52 @@ type CertSelector struct {
 	Location string `json:"location,omitempty"`
 
 	// runtime resources kept for cleanup (unexported, not serialized)
-	cacheKey string
-	pattern  *regexp.Regexp
-	logger   *zap.Logger
+	cacheKey   string
+	cacheEntry *cachedCert
+	pattern    *regexp.Regexp
+	logger     *zap.Logger
+}
+
+type selectorSnapshot struct {
+	patternString string
+	pattern       *regexp.Regexp
+	field         string
+	location      string
+	logger        *zap.Logger
+}
+
+func (cs *CertSelector) snapshot() selectorSnapshot {
+	return selectorSnapshot{
+		patternString: cs.Pattern,
+		pattern:       cs.pattern,
+		field:         normalizeSelectorField(cs.Field),
+		location:      normalizeStoreLocation(cs.Location),
+		logger:        cs.logger,
+	}
+}
+
+func normalizeSelectorField(field string) string {
+	if field == "" {
+		return "subject"
+	}
+	return field
+}
+
+func normalizeStoreLocation(location string) string {
+	if strings.EqualFold(location, "user") {
+		return "user"
+	}
+	return "system"
 }
 
 // loadCertificateWithResources loads a certificate from the store and returns
 // the certificate along with the store and identity handles for resource management.
-func (cs *CertSelector) loadCertificateWithResources() (tls.Certificate, certstore.Store, certstore.Identity, error) {
+func (s selectorSnapshot) loadCertificateWithResources() (tls.Certificate, certstore.Store, certstore.Identity, error) {
 	var cert tls.Certificate
 
-	storeLocation := getStoreLocation(cs.Location)
+	storeLocation := getStoreLocation(s.location)
 
-	store, err := certstore.Open(storeLocation, certstore.ReadOnly)
+	store, err := openCertStore(storeLocation, certstore.ReadOnly)
 	if err != nil {
 		return cert, nil, nil, err
 	}
@@ -48,26 +82,26 @@ func (cs *CertSelector) loadCertificateWithResources() (tls.Certificate, certsto
 		return cert, nil, nil, err
 	}
 
-	identity, err := findMatchingIdentity(identities, cs.pattern, cs.Field)
+	identity, err := findMatchingIdentity(identities, s.pattern, s.field)
 	if err != nil {
 		store.Close()
-		return cert, nil, nil, fmt.Errorf("%w in %s store", err, cs.Location)
+		return cert, nil, nil, fmt.Errorf("%w in %s store", err, s.location)
 	}
 
 	// Log the certificate details if logger is available
-	if cs.logger != nil {
+	if s.logger != nil {
 		certInfo, err := identity.Certificate()
 		if err == nil {
 			issuer := certInfo.Issuer.CommonName
 			if issuer == "" {
 				issuer = certInfo.Issuer.String()
 			}
-			cs.logger.Info(
+			s.logger.Info(
 				"loaded client certificate from OS certificate store",
 				zap.String("common_name", certInfo.Subject.CommonName),
 				zap.String("issuer", issuer),
 				zap.String("serial_number", certInfo.SerialNumber.String()),
-				zap.String("location", cs.Location),
+				zap.String("location", s.location),
 			)
 		}
 	}
