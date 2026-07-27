@@ -92,6 +92,29 @@ The `client_certificate` object supports the following fields:
   - macOS: `"system"` or `"user"` (searches both automatically)
   - Windows: `"machine"` or `"user"` (maps to LocalMachine or CurrentUser)
   - Default: `"system"`
+- **`exit_on_unrecoverable_signer_error`** (optional): Terminate the process when
+  the OS store can no longer sign and reloading the certificate does not help
+  - Default: `false`
+  - See [Unrecoverable signer errors](#unrecoverable-signer-errors)
+
+### Unrecoverable signer errors
+
+When signing fails, the module reloads the certificate from the OS store and
+retries. That recovers from certificate rotation and stale handles. It cannot
+recover when the OS itself invalidates every key reference the process can
+obtain - on macOS, a `securityd` restart does exactly that, and reloading then
+returns identical certificate material that still fails with
+`errSecInvalidKeyRef` (`-67712`). Only a new process can sign again.
+
+The module detects that case (identical leaf reloaded, retry still failing),
+logs it once at `error` level, and then fails handshakes immediately instead of
+re-reading the store on every request.
+
+Setting `exit_on_unrecoverable_signer_error` to `true` makes the module exit
+after logging, so a supervisor configured to restart it (launchd `KeepAlive`,
+systemd `Restart=always`) recovers automatically. Leave it `false` for a shared
+Caddy instance, where one upstream's certificate failure must not terminate
+unrelated sites.
 
 ### Regex Pattern Support
 
