@@ -345,6 +345,21 @@ func TestCertSelector_LoadCertificate(t *testing.T) {
 	}
 }
 
+// Deployed configs name these fields, and Caddy decodes module config strictly,
+// so renaming a JSON tag breaks config loading rather than falling back to a
+// default.
+func TestCertSelectorJSONFields(t *testing.T) {
+	config := []byte(`{"pattern":"^issuer$","field":"issuer","location":"system","exit_on_unrecoverable_signer_error":true}`)
+
+	var selector CertSelector
+	if err := caddy.StrictUnmarshalJSON(config, &selector); err != nil {
+		t.Fatalf("config rejected: %v", err)
+	}
+	if !selector.ExitOnUnrecoverableSignerError {
+		t.Error("expected exit_on_unrecoverable_signer_error to decode as true")
+	}
+}
+
 func TestSerializeCertificateChain(t *testing.T) {
 	pemPath, err := filepath.Abs(testCertPEM)
 	if err != nil {

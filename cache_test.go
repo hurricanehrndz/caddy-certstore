@@ -222,6 +222,82 @@ func TestRefreshingSigner(t *testing.T) {
 		releaseCachedCertificate(cacheKey)
 	})
 
+	t.Run("identical reload that still fails is unrecoverable and stops reloading", func(t *testing.T) {
+		resetCertificateCache(t)
+		exitCodes := withStubbedExit(t)
+
+		key := newTestKey(t)
+		cert := newTestCertificate(t, "unrecoverable.example.test", key)
+		loads := []*fakeStoreLoad{
+			newFakeStoreLoad(cert, newFakeSignerWithErrors(key.Public(), nil, errStaleSigner)),
+			newFakeStoreLoad(cert, newFakeSignerWithErrors(key.Public(), []byte("never used"), errRetrySigner)),
+		}
+		provider := withFakeStoreLoads(t, loads...)
+
+		selector := newTestSelector("^unrecoverable\\.example\\.test$")
+		loadedCert, cacheKey, err := selector.getCachedCertificate()
+		if err != nil {
+			t.Fatalf("load failed: %v", err)
+		}
+
+		signer := loadedCert.PrivateKey.(crypto.Signer)
+		_, err = signer.Sign(crand.Reader, []byte("digest"), crypto.SHA256)
+		assertErrorContains(t, err, "only a process restart can recover", errStaleSigner.Error(), errRetrySigner.Error())
+
+		// A second handshake must fail fast: no further store loads, and no retry
+		// with the reloaded signer (which would now return a signature).
+		_, err = signer.Sign(crand.Reader, []byte("digest"), crypto.SHA256)
+		assertErrorContains(t, err, "only a process restart can recover")
+		if _, err := selector.cacheEntry.currentCertificate(); err == nil {
+			t.Fatal("expected currentCertificate to fail once the entry is unrecoverable")
+		}
+		if provider.openCount() != 2 {
+			t.Fatalf("expected exactly one reload attempt, got %d opens", provider.openCount())
+		}
+
+		select {
+		case code := <-exitCodes:
+			t.Fatalf("process exited with %d without opting in", code)
+		case <-time.After(50 * time.Millisecond):
+		}
+
+		releaseCachedCertificate(cacheKey)
+	})
+
+	t.Run("exit_on_unrecoverable_signer_error exits for the supervisor", func(t *testing.T) {
+		resetCertificateCache(t)
+		exitCodes := withStubbedExit(t)
+
+		key := newTestKey(t)
+		cert := newTestCertificate(t, "exit.example.test", key)
+		loads := []*fakeStoreLoad{
+			newFakeStoreLoad(cert, newFakeSignerWithErrors(key.Public(), nil, errStaleSigner)),
+			newFakeStoreLoad(cert, newFakeSignerWithErrors(key.Public(), nil, errRetrySigner)),
+		}
+		withFakeStoreLoads(t, loads...)
+
+		selector := newTestSelector("^exit\\.example\\.test$")
+		selector.ExitOnUnrecoverableSignerError = true
+		loadedCert, cacheKey, err := selector.getCachedCertificate()
+		if err != nil {
+			t.Fatalf("load failed: %v", err)
+		}
+
+		_, err = loadedCert.PrivateKey.(crypto.Signer).Sign(crand.Reader, []byte("digest"), crypto.SHA256)
+		assertErrorContains(t, err, "only a process restart can recover")
+
+		select {
+		case code := <-exitCodes:
+			if code != 1 {
+				t.Fatalf("expected exit code 1, got %d", code)
+			}
+		case <-time.After(time.Second):
+			t.Fatal("expected the process to exit after an unrecoverable signer error")
+		}
+
+		releaseCachedCertificate(cacheKey)
+	})
+
 	t.Run("different key rotation refreshes cache for future handshakes", func(t *testing.T) {
 		resetCertificateCache(t)
 
@@ -269,6 +345,21 @@ func resetCertificateCache(t *testing.T) {
 	cacheMutex.Lock()
 	certCache = make(map[string]*cachedCert)
 	cacheMutex.Unlock()
+}
+
+// withStubbedExit captures the exit decision instead of terminating the test
+// binary, and shortens the grace period so tests do not wait on it.
+func withStubbedExit(t *testing.T) <-chan int {
+	t.Helper()
+
+	codes := make(chan int, 1)
+	oldExit, oldGrace := exitProcess, unrecoverableExitGrace
+	exitProcess = func(code int) { codes <- code }
+	unrecoverableExitGrace = time.Millisecond
+	t.Cleanup(func() {
+		exitProcess, unrecoverableExitGrace = oldExit, oldGrace
+	})
+	return codes
 }
 
 func withFakeStoreLoads(t *testing.T, loads ...*fakeStoreLoad) *fakeStoreProvider {

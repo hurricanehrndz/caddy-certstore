@@ -8,8 +8,10 @@ import (
 	"crypto/x509"
 	"fmt"
 	"io"
+	"os"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/tailscale/certstore"
 	"go.uber.org/zap"
@@ -18,6 +20,13 @@ import (
 var (
 	certCache  = make(map[string]*cachedCert)
 	cacheMutex sync.Mutex
+)
+
+// exitProcess and unrecoverableExitGrace are variables so tests can observe the
+// exit decision without terminating the test binary.
+var (
+	exitProcess            = os.Exit
+	unrecoverableExitGrace = 2 * time.Second
 )
 
 // cachedCert holds a cached certificate along with its OS resources
@@ -30,6 +39,13 @@ type cachedCert struct {
 	identity certstore.Identity
 	store    certstore.Store
 	selector selectorSnapshot
+
+	// unrecoverable is set once reloading the certificate returns identical
+	// material that still cannot sign. That means the OS key references held by
+	// this process are dead (macOS: securityd restarted, every reference minted
+	// afterwards fails too), so no later handshake can recover and reloading
+	// again only costs a keychain enumeration per request.
+	unrecoverable error
 
 	refCount int32
 	cacheKey string
@@ -139,6 +155,10 @@ func (cached *cachedCert) currentCertificate() (tls.Certificate, error) {
 	cached.mu.RLock()
 	defer cached.mu.RUnlock()
 
+	if cached.unrecoverable != nil {
+		return tls.Certificate{}, cached.unrecoverable
+	}
+
 	cert := cloneTLSCertificate(cached.cert)
 	expectedPublicKey, err := certificatePublicKey(cert)
 	if err != nil {
@@ -211,7 +231,11 @@ func (s *refreshingSigner) Sign(rand io.Reader, digest []byte, opts crypto.Signe
 	}
 	originalErr := err
 
-	canRetry, err := s.entry.refresh(s.expectedPublicKey, s.leafSerial, s.leafThumbprint, originalErr)
+	if unrecoverable := s.entry.unrecoverableError(); unrecoverable != nil {
+		return nil, unrecoverable
+	}
+
+	canRetry, leafChanged, err := s.entry.refresh(s.expectedPublicKey, s.leafSerial, s.leafThumbprint, originalErr)
 	if err != nil {
 		return nil, err
 	}
@@ -221,47 +245,119 @@ func (s *refreshingSigner) Sign(rand io.Reader, digest []byte, opts crypto.Signe
 	}
 
 	sig, retryErr := s.signCurrent(rand, digest, opts)
-	if retryErr != nil {
-		return nil, fmt.Errorf("certstore signer failed for certificate serial %s thumbprint %s: refresh succeeded, but retry failed: original signing error: %w; retry error: %v",
-			s.leafSerial, thumbprintPrefix(s.leafThumbprint), originalErr, retryErr)
+	if retryErr == nil {
+		return sig, nil
 	}
-	return sig, nil
+	if !leafChanged {
+		return nil, s.entry.markUnrecoverable(s.leafSerial, s.leafThumbprint, originalErr, retryErr)
+	}
+	return nil, fmt.Errorf("certstore signer failed for certificate serial %s thumbprint %s: refresh succeeded, but retry failed: original signing error: %w; retry error: %v",
+		s.leafSerial, thumbprintPrefix(s.leafThumbprint), originalErr, retryErr)
+}
+
+func (cached *cachedCert) unrecoverableError() error {
+	cached.mu.RLock()
+	defer cached.mu.RUnlock()
+
+	return cached.unrecoverable
+}
+
+// markUnrecoverable records that reloading cannot restore signing, so later
+// handshakes fail immediately instead of reloading the OS store for every
+// request. Only a new process can recover, so when the operator has opted in
+// the process exits and leaves the restart to its supervisor.
+func (cached *cachedCert) markUnrecoverable(serial, thumbprint string, originalErr, retryErr error) error {
+	unrecoverable := fmt.Errorf("certstore signer failed for certificate serial %s thumbprint %s: reloading returned identical certificate material that still cannot sign, so the OS key references in this process are dead and only a process restart can recover: original signing error: %w; retry error: %v",
+		serial, thumbprintPrefix(thumbprint), originalErr, retryErr)
+
+	cached.mu.Lock()
+	first := cached.unrecoverable == nil
+	if first {
+		cached.unrecoverable = unrecoverable
+	}
+	recorded, selector := cached.unrecoverable, cached.selector
+	cached.mu.Unlock()
+
+	if !first {
+		return recorded
+	}
+
+	if selector.logger != nil {
+		selector.logger.Error(
+			"client certificate signer cannot be recovered without restarting the process",
+			zap.String("cache_key", thumbprintPrefix(cached.cacheKey)),
+			zap.String("serial_number", serial),
+			zap.String("leaf_thumbprint", thumbprintPrefix(thumbprint)),
+			zap.Bool("exiting", selector.exitOnUnrecoverableSignerError),
+			zap.Error(recorded),
+		)
+	}
+	if selector.exitOnUnrecoverableSignerError {
+		scheduleUnrecoverableExit(selector.logger)
+	}
+
+	return recorded
+}
+
+// scheduleUnrecoverableExit lets the in-flight handshake fail back to its client
+// before terminating, so a supervisor with automatic restart (launchd
+// KeepAlive, systemd Restart=always) can hand the module a fresh OS keychain
+// session.
+//
+// Deliberate shortcut: a fixed grace period instead of draining Caddy's active
+// requests. Upgrade path: hook Caddy's graceful shutdown if a clean drain ever
+// matters more than keeping this simple.
+func scheduleUnrecoverableExit(logger *zap.Logger) {
+	time.AfterFunc(unrecoverableExitGrace, func() {
+		if logger != nil {
+			_ = logger.Sync()
+		}
+		exitProcess(1)
+	})
 }
 
 func (s *refreshingSigner) signCurrent(rand io.Reader, digest []byte, opts crypto.SignerOpts) ([]byte, error) {
 	s.entry.mu.RLock()
 	defer s.entry.mu.RUnlock()
 
+	if s.entry.unrecoverable != nil {
+		return nil, s.entry.unrecoverable
+	}
 	if s.entry.signer == nil {
 		return nil, fmt.Errorf("client certificate signer is closed")
 	}
 	return s.entry.signer.Sign(rand, digest, opts)
 }
 
-func (cached *cachedCert) refresh(expectedPublicKey crypto.PublicKey, oldSerial, oldThumbprint string, originalErr error) (bool, error) {
+// refresh reloads the certificate from the OS store after a signing failure. It
+// reports whether the current handshake may retry with the reloaded signer, and
+// whether the reloaded leaf differs from the one that failed - identical
+// material is the signal that the failure is not stale-handle rotation.
+func (cached *cachedCert) refresh(expectedPublicKey crypto.PublicKey, oldSerial, oldThumbprint string, originalErr error) (mayRetry, leafChanged bool, err error) {
 	cached.mu.Lock()
 	defer cached.mu.Unlock()
 
 	freshCert, freshStore, freshIdentity, err := cached.selector.loadCertificateWithResources()
 	if err != nil {
-		return false, fmt.Errorf("certstore signer failed for certificate serial %s thumbprint %s: refresh failed: original signing error: %w; refresh error: %v",
+		return false, false, fmt.Errorf("certstore signer failed for certificate serial %s thumbprint %s: refresh failed: original signing error: %w; refresh error: %v",
 			oldSerial, thumbprintPrefix(oldThumbprint), originalErr, err)
 	}
 
 	freshSigner, err := extractCertificateSigner(freshCert)
 	if err != nil {
 		closeCertificateResources(freshIdentity, freshStore)
-		return false, fmt.Errorf("certstore signer failed for certificate serial %s thumbprint %s: refresh loaded an unusable signer: original signing error: %w; refresh error: %v",
+		return false, false, fmt.Errorf("certstore signer failed for certificate serial %s thumbprint %s: refresh loaded an unusable signer: original signing error: %w; refresh error: %v",
 			oldSerial, thumbprintPrefix(oldThumbprint), originalErr, err)
 	}
 	freshCert.PrivateKey = nil
 
-	mayRetry, err := publicKeysEqual(freshSigner.Public(), expectedPublicKey)
+	mayRetry, err = publicKeysEqual(freshSigner.Public(), expectedPublicKey)
 	if err != nil {
 		closeCertificateResources(freshIdentity, freshStore)
-		return false, fmt.Errorf("certstore signer failed for certificate serial %s thumbprint %s: refresh could not compare public keys: original signing error: %w; compare error: %v",
+		return false, false, fmt.Errorf("certstore signer failed for certificate serial %s thumbprint %s: refresh could not compare public keys: original signing error: %w; compare error: %v",
 			oldSerial, thumbprintPrefix(oldThumbprint), originalErr, err)
 	}
+	leafChanged = makeLeafThumbprint(freshCert.Leaf) != oldThumbprint
 
 	oldCert := cached.cert
 	oldIdentity := cached.identity
@@ -274,7 +370,7 @@ func (cached *cachedCert) refresh(expectedPublicKey crypto.PublicKey, oldSerial,
 
 	if cached.selector.logger != nil {
 		cached.selector.logger.Warn(
-			"refreshed client certificate after signer error",
+			"reloaded client certificate after signer error",
 			zap.String("cache_key", thumbprintPrefix(cached.cacheKey)),
 			zap.String("old_serial_number", certificateSerial(oldCert)),
 			zap.String("new_serial_number", certificateSerial(freshCert)),
@@ -287,7 +383,7 @@ func (cached *cachedCert) refresh(expectedPublicKey crypto.PublicKey, oldSerial,
 
 	closeCertificateResources(oldIdentity, oldStore)
 
-	return mayRetry, nil
+	return mayRetry, leafChanged, nil
 }
 
 func publicKeysEqual(a, b crypto.PublicKey) (bool, error) {

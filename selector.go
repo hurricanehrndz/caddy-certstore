@@ -25,6 +25,17 @@ type CertSelector struct {
 	// On macOS: "user" or "system" (no effect - Keychain searches both automatically)
 	Location string `json:"location,omitempty"`
 
+	// ExitOnUnrecoverableSignerError terminates the process when the OS
+	// certificate store can no longer sign with this certificate and reloading
+	// it does not help, because only a new process can recover (on macOS a
+	// securityd restart invalidates every key reference this process can mint).
+	// Intended for single-purpose deployments supervised by launchd or systemd
+	// with automatic restart.
+	//
+	// Defaults to false: a shared Caddy instance must not be terminated because
+	// one upstream's client certificate broke.
+	ExitOnUnrecoverableSignerError bool `json:"exit_on_unrecoverable_signer_error,omitempty"`
+
 	// runtime resources kept for cleanup (unexported, not serialized)
 	cacheKey   string
 	cacheEntry *cachedCert
@@ -32,21 +43,26 @@ type CertSelector struct {
 	logger     *zap.Logger
 }
 
+// selectorSnapshot is the immutable view of a selector kept by a cache entry.
+// Entries are shared by cache key, which covers pattern, field and location but
+// not policy, so the first loader's exit policy applies to the shared entry.
 type selectorSnapshot struct {
-	patternString string
-	pattern       *regexp.Regexp
-	field         string
-	location      string
-	logger        *zap.Logger
+	patternString                  string
+	pattern                        *regexp.Regexp
+	field                          string
+	location                       string
+	logger                         *zap.Logger
+	exitOnUnrecoverableSignerError bool
 }
 
 func (cs *CertSelector) snapshot() selectorSnapshot {
 	return selectorSnapshot{
-		patternString: cs.Pattern,
-		pattern:       cs.pattern,
-		field:         normalizeSelectorField(cs.Field),
-		location:      normalizeStoreLocation(cs.Location),
-		logger:        cs.logger,
+		patternString:                  cs.Pattern,
+		pattern:                        cs.pattern,
+		field:                          normalizeSelectorField(cs.Field),
+		location:                       normalizeStoreLocation(cs.Location),
+		logger:                         cs.logger,
+		exitOnUnrecoverableSignerError: cs.ExitOnUnrecoverableSignerError,
 	}
 }
 
