@@ -10,6 +10,7 @@ import (
 	"regexp"
 
 	"github.com/caddyserver/caddy/v2"
+	"github.com/caddyserver/caddy/v2/caddyconfig/caddyfile"
 	"github.com/caddyserver/caddy/v2/modules/caddyhttp/reverseproxy"
 )
 
@@ -32,8 +33,12 @@ type HTTPTransport struct {
 // CaddyModule returns the Caddy module information.
 func (h HTTPTransport) CaddyModule() caddy.ModuleInfo {
 	return caddy.ModuleInfo{
-		ID:  "http.reverse_proxy.transport.certstore",
-		New: func() caddy.Module { return new(HTTPTransport) },
+		ID: "http.reverse_proxy.transport.certstore",
+		New: func() caddy.Module {
+			m := new(HTTPTransport)
+			m.HTTPTransport = new(reverseproxy.HTTPTransport)
+			return m
+		},
 	}
 }
 
@@ -100,6 +105,23 @@ func (h *HTTPTransport) getClientCertificate(cri *tls.CertificateRequestInfo) (*
 		}
 	}
 	return &cert, nil
+}
+
+func (h *HTTPTransport) UnmarshalCaddyfile(d *caddyfile.Dispenser) error {
+	if !d.Next() {
+		return fmt.Errorf("missing certstore transport configuration")
+	}
+
+	for d.NextBlock(0) {
+		switch d.Val() {
+		case "client_certificate":
+			h.ClientCert = new(CertSelector)
+			h.ClientCert.UnmarshalCaddyfile(d)
+		default:
+			return fmt.Errorf("unsupported configuration option `%s`", d.Val())
+		}
+	}
+	return nil
 }
 
 // Cleanup implements caddy.CleanerUpper. It closes any idle connections

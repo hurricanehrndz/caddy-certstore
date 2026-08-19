@@ -46,7 +46,7 @@ configured in your Caddyfile or JSON config.
                   "transport": {
                     "protocol": "certstore",
                     "client_certificate": {
-                      "name": "client.example.com",
+                      "pattern": "client.example.com",
                       "location": "user"
                     }
                   },
@@ -73,7 +73,7 @@ example.com {
     reverse_proxy https://upstream.example.com {
         transport certstore {
             client_certificate {
-                name client.example.com
+                pattern client.example.com
                 location user
             }
         }

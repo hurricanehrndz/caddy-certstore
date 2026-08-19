@@ -6,6 +6,7 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/caddyserver/caddy/v2/caddyconfig/caddyfile"
 	"github.com/tailscale/certstore"
 	"go.uber.org/zap"
 )
@@ -126,4 +127,25 @@ func (cs *CertSelector) loadCertificate() (tls.Certificate, error) {
 
 	cs.cacheKey = cacheKey
 	return cert, nil
+}
+
+func (cs *CertSelector) UnmarshalCaddyfile(d *caddyfile.Dispenser) error {
+	if !d.Next() {
+		return fmt.Errorf("missing client certificate configuration")
+	}
+
+	for d.NextBlock(0) {
+		switch d.Val() {
+		case "pattern":
+			d.Args(&cs.Pattern)
+		case "field":
+			d.Args(&cs.Field)
+		case "location":
+			d.Args(&cs.Location)
+		default:
+			return fmt.Errorf("unsupported configuration option `%s`", d.Val())
+		}
+	}
+
+	return nil
 }
