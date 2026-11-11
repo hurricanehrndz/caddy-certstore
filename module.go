@@ -107,18 +107,29 @@ func (h *HTTPTransport) getClientCertificate(cri *tls.CertificateRequestInfo) (*
 	return &cert, nil
 }
 
+// UnmarshalCaddyfile sets up the transport from Caddyfile tokens. Syntax:
+//
+//	transport certstore {
+//		client_certificate {
+//			pattern  <regex>
+//			field    subject|issuer|serial|dns_names
+//			location user|system|machine
+//		}
+//	}
+//
+// Only client_certificate is parsed; the standard http transport options
+// (timeouts, tls_*, etc.) are not supported here and require JSON config.
 func (h *HTTPTransport) UnmarshalCaddyfile(d *caddyfile.Dispenser) error {
-	if !d.Next() {
-		return fmt.Errorf("missing certstore transport configuration")
-	}
-
+	d.Next() // consume transport name
 	for d.NextBlock(0) {
 		switch d.Val() {
 		case "client_certificate":
 			h.ClientCert = new(CertSelector)
-			h.ClientCert.UnmarshalCaddyfile(d)
+			if err := h.ClientCert.UnmarshalCaddyfile(d); err != nil {
+				return err
+			}
 		default:
-			return fmt.Errorf("unsupported configuration option `%s`", d.Val())
+			return d.Errf("unrecognized subdirective '%s'", d.Val())
 		}
 	}
 	return nil
@@ -146,4 +157,5 @@ var (
 	_ http.RoundTripper         = (*HTTPTransport)(nil)
 	_ caddy.CleanerUpper        = (*HTTPTransport)(nil)
 	_ reverseproxy.TLSTransport = (*HTTPTransport)(nil)
+	_ caddyfile.Unmarshaler     = (*HTTPTransport)(nil)
 )

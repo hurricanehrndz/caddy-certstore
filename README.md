@@ -85,24 +85,21 @@ example.com {
 
 The `client_certificate` object supports the following fields:
 
-- **`name`** (required): Common name or regex pattern of the certificate to load
-  - Exact match: `"client.example.com"`
-  - Regex pattern: `"client\\..*\\.com"` (automatically detected by presence of regex metacharacters)
+- **`pattern`** (required): Go regular expression matched against `field`.
+  It is unanchored, so use `^` and `$` for an exact match.
+- **`field`** (optional): Certificate field to match against: `subject`
+  (common name, default), `issuer`, `serial`, or `dns_names`
 - **`location`** (optional): Certificate store location
   - macOS: `"system"` or `"user"` (searches both automatically)
   - Windows: `"machine"` or `"user"` (maps to LocalMachine or CurrentUser)
   - Default: `"system"`
 
-### Regex Pattern Support
+The Caddyfile form supports only `client_certificate`. Standard `http`
+transport options (timeouts, `tls_*`, etc.) require JSON configuration.
 
-The module automatically detects regex patterns by checking for metacharacters
-(`*`, `+`, `?`, `^`, `$`, `()`, `[]`, `{}`, `|`, `\`). When detected, the
-pattern is compiled and used for matching against certificate common names.
-
-**Examples:**
-- `"^client-.*\\.example\\.com$"` - Matches any client certificate under example.com
-- `"test\\..*"` - Matches any certificate starting with "test."
-- `"*.example.com"` - Wildcard pattern
+**Pattern examples:**
+- `"^client\\.example\\.com$"` - Exact match
+- `"^client-.*\\.example\\.com$"` - Any client certificate under example.com
 
 ## Features
 
@@ -116,8 +113,8 @@ pattern is compiled and used for matching against certificate common names.
 ## How It Works
 
 1. During Caddy's provision phase, the module:
-   - Validates that a certificate name is specified
-   - Detects and compiles regex patterns if present
+   - Validates that a certificate pattern is specified
+   - Compiles the regex pattern
    - Opens the OS certificate store (read-only)
    - Searches for matching certificate identity
    - Loads the certificate and private key

@@ -6,9 +6,10 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/caddyserver/caddy/v2/caddyconfig/caddyfile"
 	"github.com/tailscale/certstore"
 	"go.uber.org/zap"
+
+	"github.com/caddyserver/caddy/v2/caddyconfig/caddyfile"
 )
 
 // CertSelector specifies criteria for selecting a certificate from the store.
@@ -129,23 +130,24 @@ func (cs *CertSelector) loadCertificate() (tls.Certificate, error) {
 	return cert, nil
 }
 
+// UnmarshalCaddyfile parses a client_certificate block. The dispenser must
+// be positioned on the client_certificate token.
 func (cs *CertSelector) UnmarshalCaddyfile(d *caddyfile.Dispenser) error {
-	if !d.Next() {
-		return fmt.Errorf("missing client certificate configuration")
-	}
-
-	for d.NextBlock(0) {
+	for nesting := d.Nesting(); d.NextBlock(nesting); {
+		var target *string
 		switch d.Val() {
 		case "pattern":
-			d.Args(&cs.Pattern)
+			target = &cs.Pattern
 		case "field":
-			d.Args(&cs.Field)
+			target = &cs.Field
 		case "location":
-			d.Args(&cs.Location)
+			target = &cs.Location
 		default:
-			return fmt.Errorf("unsupported configuration option `%s`", d.Val())
+			return d.Errf("unrecognized client_certificate option '%s'", d.Val())
+		}
+		if !d.AllArgs(target) {
+			return d.ArgErr()
 		}
 	}
-
 	return nil
 }
