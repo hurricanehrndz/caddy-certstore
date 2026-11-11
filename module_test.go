@@ -8,10 +8,12 @@ import (
 	"encoding/pem"
 	"os"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"testing"
 
 	"github.com/caddyserver/caddy/v2"
+	"github.com/caddyserver/caddy/v2/caddyconfig/caddyfile"
 	"github.com/caddyserver/caddy/v2/modules/caddyhttp/reverseproxy"
 )
 
@@ -155,6 +157,90 @@ func TestHTTPTransport_Provision(t *testing.T) {
 			// Cleanup
 			if err := tt.transport.Cleanup(); err != nil {
 				t.Errorf("Failed to cleanup: %v", err)
+			}
+		})
+	}
+}
+
+// TestHTTPTransport_UnmarshalCaddyfile guards the nested block parsing: a
+// selector that miscounts nesting silently drops whatever follows its block.
+func TestHTTPTransport_UnmarshalCaddyfile(t *testing.T) {
+	tests := []struct {
+		name        string
+		input       string
+		expectError bool
+		expected    *CertSelector
+	}{
+		{
+			name: "all selector options",
+			input: `certstore {
+				client_certificate {
+					pattern ^client\.example\.com$
+					field dns_names
+					location user
+				}
+			}`,
+			expected: &CertSelector{Pattern: `^client\.example\.com$`, Field: "dns_names", Location: "user"},
+		},
+		{
+			name:     "no options",
+			input:    `certstore`,
+			expected: nil,
+		},
+		{
+			name: "unknown option after client_certificate block",
+			input: `certstore {
+				client_certificate {
+					pattern foo
+				}
+				bogus
+			}`,
+			expectError: true,
+		},
+		{
+			name: "unknown selector option",
+			input: `certstore {
+				client_certificate {
+					name foo
+				}
+			}`,
+			expectError: true,
+		},
+		{
+			name: "missing argument",
+			input: `certstore {
+				client_certificate {
+					pattern
+				}
+			}`,
+			expectError: true,
+		},
+		{
+			name: "too many arguments",
+			input: `certstore {
+				client_certificate {
+					pattern foo bar
+				}
+			}`,
+			expectError: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			h := new(HTTPTransport)
+			err := h.UnmarshalCaddyfile(caddyfile.NewTestDispenser(tt.input))
+			if tt.expectError {
+				if err == nil {
+					t.Fatal("Expected error, got nil")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("Unexpected error: %v", err)
+			}
+			if !reflect.DeepEqual(h.ClientCert, tt.expected) {
+				t.Fatalf("Expected selector %+v, got %+v", tt.expected, h.ClientCert)
 			}
 		})
 	}

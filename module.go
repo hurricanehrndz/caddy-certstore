@@ -10,6 +10,7 @@ import (
 	"regexp"
 
 	"github.com/caddyserver/caddy/v2"
+	"github.com/caddyserver/caddy/v2/caddyconfig/caddyfile"
 	"github.com/caddyserver/caddy/v2/modules/caddyhttp/reverseproxy"
 )
 
@@ -32,8 +33,12 @@ type HTTPTransport struct {
 // CaddyModule returns the Caddy module information.
 func (h HTTPTransport) CaddyModule() caddy.ModuleInfo {
 	return caddy.ModuleInfo{
-		ID:  "http.reverse_proxy.transport.certstore",
-		New: func() caddy.Module { return new(HTTPTransport) },
+		ID: "http.reverse_proxy.transport.certstore",
+		New: func() caddy.Module {
+			m := new(HTTPTransport)
+			m.HTTPTransport = new(reverseproxy.HTTPTransport)
+			return m
+		},
 	}
 }
 
@@ -102,6 +107,34 @@ func (h *HTTPTransport) getClientCertificate(cri *tls.CertificateRequestInfo) (*
 	return &cert, nil
 }
 
+// UnmarshalCaddyfile sets up the transport from Caddyfile tokens. Syntax:
+//
+//	transport certstore {
+//		client_certificate {
+//			pattern  <regex>
+//			field    subject|issuer|serial|dns_names
+//			location user|system|machine
+//		}
+//	}
+//
+// Only client_certificate is parsed; the standard http transport options
+// (timeouts, tls_*, etc.) are not supported here and require JSON config.
+func (h *HTTPTransport) UnmarshalCaddyfile(d *caddyfile.Dispenser) error {
+	d.Next() // consume transport name
+	for d.NextBlock(0) {
+		switch d.Val() {
+		case "client_certificate":
+			h.ClientCert = new(CertSelector)
+			if err := h.ClientCert.UnmarshalCaddyfile(d); err != nil {
+				return err
+			}
+		default:
+			return d.Errf("unrecognized subdirective '%s'", d.Val())
+		}
+	}
+	return nil
+}
+
 // Cleanup implements caddy.CleanerUpper. It closes any idle connections
 // and decrements the reference count for the cached certificate. When the
 // reference count reaches zero, the certificate's OS resources are freed.
@@ -124,4 +157,5 @@ var (
 	_ http.RoundTripper         = (*HTTPTransport)(nil)
 	_ caddy.CleanerUpper        = (*HTTPTransport)(nil)
 	_ reverseproxy.TLSTransport = (*HTTPTransport)(nil)
+	_ caddyfile.Unmarshaler     = (*HTTPTransport)(nil)
 )
