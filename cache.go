@@ -8,8 +8,10 @@ import (
 	"crypto/x509"
 	"fmt"
 	"io"
+	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/tailscale/certstore"
 	"go.uber.org/zap"
@@ -31,9 +33,22 @@ type cachedCert struct {
 	store    certstore.Store
 	selector selectorSnapshot
 
+	// generation counts identity swaps, so a signer created before a swap can
+	// tell that another handshake already reloaded the store.
+	generation uint64
+	// lastReload is when the store was last reloaded, by either trigger. It
+	// starts zero, not at the initial load, so a signer that fails right after
+	// provisioning still refreshes; the cost is one extra load when the initial
+	// leaf is already in its last 10%.
+	lastReload time.Time
+
 	refCount int32
 	cacheKey string
 }
+
+// reloadThrottle bounds how often an entry reloads the store, so a certificate
+// removed with no replacement does not cost a store enumeration per handshake.
+const reloadThrottle = 5 * time.Minute
 
 func makeLeafThumbprint(cert *x509.Certificate) string {
 	thumbprint := sha256.Sum256(cert.Raw)
@@ -42,6 +57,11 @@ func makeLeafThumbprint(cert *x509.Certificate) string {
 
 // makeCacheKey generates a selector-aware cache key from the resolved selector
 // and the initially loaded certificate thumbprint.
+//
+// After a reload swaps the identity, the key no longer matches the served leaf,
+// so a later config reload creates a second entry for the same identity. That
+// duplicates OS handles until the old config is released, which is cheaper than
+// rekeying a shared entry; it is not a correctness problem.
 func makeCacheKey(selector selectorSnapshot, cert *x509.Certificate) string {
 	h := sha256.New()
 	writeCacheKeyPart(h, selector.patternString)
@@ -137,6 +157,13 @@ func (cs *CertSelector) currentCertificate() (tls.Certificate, error) {
 
 func (cached *cachedCert) currentCertificate() (tls.Certificate, error) {
 	cached.mu.RLock()
+	expiring := cached.expiryReloadDueLocked(timeNow())
+	cached.mu.RUnlock()
+	if expiring {
+		cached.reloadNearExpiry()
+	}
+
+	cached.mu.RLock()
 	defer cached.mu.RUnlock()
 
 	cert := cloneTLSCertificate(cached.cert)
@@ -147,11 +174,70 @@ func (cached *cachedCert) currentCertificate() (tls.Certificate, error) {
 
 	cert.PrivateKey = &refreshingSigner{
 		entry:             cached,
+		generation:        cached.generation,
 		expectedPublicKey: expectedPublicKey,
 		leafSerial:        cert.Leaf.SerialNumber.String(),
 		leafThumbprint:    makeLeafThumbprint(cert.Leaf),
 	}
 	return cert, nil
+}
+
+// expiryReloadDueLocked reports whether the served leaf is in the last 10% of
+// its lifetime and the reload throttle allows another store load. The signers
+// cache the OS key handle, so a renewal that keeps the keypair never makes
+// signing fail; without this check the old leaf is served until it expires.
+// Callers must hold cached.mu.
+func (cached *cachedCert) expiryReloadDueLocked(now time.Time) bool {
+	leaf := cached.cert.Leaf
+	if leaf == nil || cached.store == nil || now.Sub(cached.lastReload) < reloadThrottle {
+		return false
+	}
+	lifetime := leaf.NotAfter.Sub(leaf.NotBefore)
+	return !now.Before(leaf.NotBefore.Add(lifetime - lifetime/10))
+}
+
+// reloadNearExpiry reloads the store to pick up a renewed leaf. No handshake
+// is in flight, so unlike refresh it needs no public key gate. On failure it
+// keeps serving the current leaf; the throttle limits the warning to one per window.
+//
+// A reload that finds the same leaf still swaps in the fresh handles. Each
+// expiry reload restarts the throttle, so if it kept the old handles a stale
+// signer could never be replaced by the failure path in the last 10%.
+func (cached *cachedCert) reloadNearExpiry() {
+	cached.mu.Lock()
+	defer cached.mu.Unlock()
+
+	// Concurrent handshakes all see the leaf expiring; only the first reloads.
+	if !cached.expiryReloadDueLocked(timeNow()) {
+		return
+	}
+
+	oldCert, err := cached.reloadLocked()
+	logger := cached.selector.logger
+	if logger == nil {
+		return
+	}
+	if err != nil {
+		logger.Warn(
+			"could not reload expiring client certificate; keeping the current one",
+			zap.String("cache_key", thumbprintPrefix(cached.cacheKey)),
+			zap.String("serial_number", certificateSerial(cached.cert)),
+			zap.Time("not_after", cached.cert.Leaf.NotAfter),
+			zap.Duration("next_attempt_in", reloadThrottle),
+			zap.Error(err),
+		)
+		return
+	}
+	if !bytes.Equal(oldCert.Leaf.Raw, cached.cert.Leaf.Raw) {
+		logger.Info(
+			"reloaded expiring client certificate",
+			zap.String("cache_key", thumbprintPrefix(cached.cacheKey)),
+			zap.String("old_serial_number", certificateSerial(oldCert)),
+			zap.String("new_serial_number", certificateSerial(cached.cert)),
+			zap.String("old_leaf_thumbprint", thumbprintPrefix(makeLeafThumbprint(oldCert.Leaf))),
+			zap.String("new_leaf_thumbprint", thumbprintPrefix(makeLeafThumbprint(cached.cert.Leaf))),
+		)
+	}
 }
 
 func cloneTLSCertificate(cert tls.Certificate) tls.Certificate {
@@ -195,6 +281,7 @@ func certificatePublicKey(cert tls.Certificate) (crypto.PublicKey, error) {
 
 type refreshingSigner struct {
 	entry             *cachedCert
+	generation        uint64
 	expectedPublicKey crypto.PublicKey
 	leafSerial        string
 	leafThumbprint    string
@@ -211,7 +298,14 @@ func (s *refreshingSigner) Sign(rand io.Reader, digest []byte, opts crypto.Signe
 	}
 	originalErr := err
 
-	canRetry, err := s.entry.refresh(s.expectedPublicKey, s.leafSerial, s.leafThumbprint, originalErr)
+	// A key whose access control leaves out this process fails the same way
+	// after a reload, so refreshing would only reopen the store on every handshake.
+	if isKeyAccessDenied(originalErr) {
+		return nil, fmt.Errorf("certstore signer failed for certificate serial %s thumbprint %s: %w",
+			s.leafSerial, thumbprintPrefix(s.leafThumbprint), signHint(originalErr))
+	}
+
+	canRetry, err := s.entry.refresh(s.generation, s.expectedPublicKey, s.leafSerial, s.leafThumbprint, originalErr)
 	if err != nil {
 		return nil, err
 	}
@@ -228,6 +322,22 @@ func (s *refreshingSigner) Sign(rand io.Reader, digest []byte, opts crypto.Signe
 	return sig, nil
 }
 
+// isKeyAccessDenied reports whether err is macOS errSecInteractionNotAllowed
+// (-25308), which a keychain signer returns when the key's access control
+// leaves out this process: a launchd daemon cannot show the access prompt.
+func isKeyAccessDenied(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "-25308")
+}
+
+// signHint names the fix for a key whose access control leaves out this
+// process, and returns any other error unchanged.
+func signHint(err error) error {
+	if !isKeyAccessDenied(err) {
+		return err
+	}
+	return fmt.Errorf("%w: the key's access control does not allow this service; deploy the identity with AllowAllAppsAccess in its MDM payload, or import it with security import -A", err)
+}
+
 func (s *refreshingSigner) signCurrent(rand io.Reader, digest []byte, opts crypto.SignerOpts) ([]byte, error) {
 	s.entry.mu.RLock()
 	defer s.entry.mu.RUnlock()
@@ -235,42 +345,66 @@ func (s *refreshingSigner) signCurrent(rand io.Reader, digest []byte, opts crypt
 	if s.entry.signer == nil {
 		return nil, fmt.Errorf("client certificate signer is closed")
 	}
+	// A reload since this handshake sent its leaf may have swapped in another
+	// key; signing with it would produce a CertificateVerify the server rejects.
+	if s.entry.generation != s.generation {
+		sameKey, err := publicKeysEqual(s.entry.signer.Public(), s.expectedPublicKey)
+		if err != nil {
+			return nil, fmt.Errorf("compare reloaded public key: %w", err)
+		}
+		if !sameKey {
+			return nil, fmt.Errorf("client certificate was reloaded with a different key after this handshake sent its leaf")
+		}
+	}
 	return s.entry.signer.Sign(rand, digest, opts)
 }
 
-func (cached *cachedCert) refresh(expectedPublicKey crypto.PublicKey, oldSerial, oldThumbprint string, originalErr error) (bool, error) {
+// refresh reloads the identity after a signing failure and reports whether the
+// failed handshake may retry: only when the now-current key equals
+// expectedPublicKey, the key whose leaf was already sent. generation is the one
+// the failing signer was created with; if it has moved on, another handshake
+// already reloaded and the store is left alone.
+func (cached *cachedCert) refresh(generation uint64, expectedPublicKey crypto.PublicKey, oldSerial, oldThumbprint string, originalErr error) (bool, error) {
 	cached.mu.Lock()
 	defer cached.mu.Unlock()
 
-	freshCert, freshStore, freshIdentity, err := cached.selector.loadCertificateWithResources()
+	// A released entry is out of the cache; resources loaded now would never close.
+	if cached.store == nil {
+		return false, fmt.Errorf("certstore signer failed for certificate serial %s thumbprint %s: client certificate was released: original signing error: %w",
+			oldSerial, thumbprintPrefix(oldThumbprint), originalErr)
+	}
+
+	if cached.generation != generation {
+		currentPublicKey, err := certificatePublicKey(cached.cert)
+		if err != nil {
+			return false, fmt.Errorf("certstore signer failed for certificate serial %s thumbprint %s: could not read the reloaded public key: original signing error: %w; error: %v",
+				oldSerial, thumbprintPrefix(oldThumbprint), originalErr, err)
+		}
+		mayRetry, err := publicKeysEqual(currentPublicKey, expectedPublicKey)
+		if err != nil {
+			return false, fmt.Errorf("certstore signer failed for certificate serial %s thumbprint %s: could not compare public keys: original signing error: %w; compare error: %v",
+				oldSerial, thumbprintPrefix(oldThumbprint), originalErr, err)
+		}
+		return mayRetry, nil
+	}
+
+	if sinceReload := timeNow().Sub(cached.lastReload); sinceReload < reloadThrottle {
+		return false, fmt.Errorf("certstore signer failed for certificate serial %s thumbprint %s: store reload throttled, last attempt %s ago (at most one per %s): original signing error: %w",
+			oldSerial, thumbprintPrefix(oldThumbprint), sinceReload.Round(time.Second), reloadThrottle, originalErr)
+	}
+
+	oldCert, err := cached.reloadLocked()
 	if err != nil {
 		return false, fmt.Errorf("certstore signer failed for certificate serial %s thumbprint %s: refresh failed: original signing error: %w; refresh error: %v",
 			oldSerial, thumbprintPrefix(oldThumbprint), originalErr, err)
 	}
+	freshCert := cached.cert
 
-	freshSigner, err := extractCertificateSigner(freshCert)
+	mayRetry, err := publicKeysEqual(cached.signer.Public(), expectedPublicKey)
 	if err != nil {
-		closeCertificateResources(freshIdentity, freshStore)
-		return false, fmt.Errorf("certstore signer failed for certificate serial %s thumbprint %s: refresh loaded an unusable signer: original signing error: %w; refresh error: %v",
+		return false, fmt.Errorf("certstore signer failed for certificate serial %s thumbprint %s: cache refreshed for future handshakes, but could not compare public keys: original signing error: %w; compare error: %v",
 			oldSerial, thumbprintPrefix(oldThumbprint), originalErr, err)
 	}
-	freshCert.PrivateKey = nil
-
-	mayRetry, err := publicKeysEqual(freshSigner.Public(), expectedPublicKey)
-	if err != nil {
-		closeCertificateResources(freshIdentity, freshStore)
-		return false, fmt.Errorf("certstore signer failed for certificate serial %s thumbprint %s: refresh could not compare public keys: original signing error: %w; compare error: %v",
-			oldSerial, thumbprintPrefix(oldThumbprint), originalErr, err)
-	}
-
-	oldCert := cached.cert
-	oldIdentity := cached.identity
-	oldStore := cached.store
-
-	cached.cert = freshCert
-	cached.signer = freshSigner
-	cached.identity = freshIdentity
-	cached.store = freshStore
 
 	if cached.selector.logger != nil {
 		cached.selector.logger.Warn(
@@ -285,9 +419,42 @@ func (cached *cachedCert) refresh(expectedPublicKey crypto.PublicKey, oldSerial,
 		)
 	}
 
+	return mayRetry, nil
+}
+
+// reloadLocked loads the identity from the store, records the attempt for the
+// reload throttle, swaps in the fresh identity, bumps the generation and closes
+// the old resources. It returns the certificate it replaced. It swaps even when
+// the store yields the same leaf, since the fresh load replaces a signer handle
+// that may be stale. Callers must hold cached.mu for writing.
+func (cached *cachedCert) reloadLocked() (tls.Certificate, error) {
+	cached.lastReload = timeNow()
+
+	freshCert, freshStore, freshIdentity, err := cached.selector.loadCertificateWithResources()
+	if err != nil {
+		return tls.Certificate{}, err
+	}
+
+	freshSigner, err := extractCertificateSigner(freshCert)
+	if err != nil {
+		closeCertificateResources(freshIdentity, freshStore)
+		return tls.Certificate{}, fmt.Errorf("loaded an unusable signer: %w", err)
+	}
+	freshCert.PrivateKey = nil
+
+	oldCert := cached.cert
+	oldIdentity := cached.identity
+	oldStore := cached.store
+
+	cached.cert = freshCert
+	cached.signer = freshSigner
+	cached.identity = freshIdentity
+	cached.store = freshStore
+	cached.generation++
+
 	closeCertificateResources(oldIdentity, oldStore)
 
-	return mayRetry, nil
+	return oldCert, nil
 }
 
 func publicKeysEqual(a, b crypto.PublicKey) (bool, error) {

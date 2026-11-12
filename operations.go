@@ -6,11 +6,17 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/tailscale/certstore"
 )
 
-var openCertStore = certstore.Open
+// openCertStore and timeNow are package variables so tests can replace the
+// OS store and the clock.
+var (
+	openCertStore = certstore.Open
+	timeNow       = time.Now
+)
 
 // getStoreLocation converts a string location to certstore.StoreLocation.
 func getStoreLocation(location string) certstore.StoreLocation {
@@ -24,35 +30,38 @@ func getStoreLocation(location string) certstore.StoreLocation {
 	}
 }
 
-// findMatchingIdentity searches for an identity using regex pattern matching.
-// It closes all non-matching identities and returns the first match, or an error if not found.
-func findMatchingIdentity(identities []certstore.Identity, pattern *regexp.Regexp, field string) (match certstore.Identity, err error) {
+// findMatchingIdentity picks, among the identities whose field matches pattern,
+// the one valid at now with the latest NotAfter: after a renewal the old and new
+// certificates often sit in the store together, in no guaranteed order.
+// It closes every other identity and returns an error if no valid identity matches.
+func findMatchingIdentity(identities []certstore.Identity, pattern *regexp.Regexp, field string, now time.Time) (certstore.Identity, error) {
 	if pattern == nil {
 		return nil, fmt.Errorf("pattern is required")
 	}
 
 	selector := getFieldSelector(field)
+	var match certstore.Identity
+	var matchCert *x509.Certificate
 	for _, tmpID := range identities {
 		certInfo, err := tmpID.Certificate()
-		if err != nil {
+		if err != nil || !pattern.MatchString(selector(certInfo)) ||
+			now.Before(certInfo.NotBefore) || now.After(certInfo.NotAfter) ||
+			(matchCert != nil && !certInfo.NotAfter.After(matchCert.NotAfter)) {
 			tmpID.Close()
 			continue
 		}
 
-		fieldValue := selector(certInfo)
-		if pattern.MatchString(fieldValue) {
-			match = tmpID
-			break
+		if match != nil {
+			match.Close()
 		}
-
-		tmpID.Close()
+		match, matchCert = tmpID, certInfo
 	}
 
 	if match == nil {
-		err = fmt.Errorf("no identity found matching pattern '%s' in field '%s'", pattern.String(), field)
+		return nil, fmt.Errorf("no valid identity found matching pattern '%s' in field '%s'", pattern.String(), field)
 	}
 
-	return match, err
+	return match, nil
 }
 
 // getFieldSelector returns a function that extracts the specified field from a certificate.
