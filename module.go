@@ -83,7 +83,7 @@ func (h *HTTPTransport) Provision(ctx caddy.Context) error {
 	// Load certificate from cache (or load and cache it)
 	_, err = h.ClientCert.loadCertificate()
 	if err != nil {
-		return fmt.Errorf("no client certificate found in: %s matching pattern: %s", h.ClientCert.Location, h.ClientCert.Pattern)
+		return fmt.Errorf("no client certificate found in: %s matching pattern: %s: %w", h.ClientCert.Location, h.ClientCert.Pattern, err)
 	}
 
 	if h.Transport.TLSClientConfig == nil {

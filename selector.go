@@ -84,7 +84,7 @@ func (s selectorSnapshot) loadCertificateWithResources() (tls.Certificate, certs
 		return cert, nil, nil, err
 	}
 
-	identity, err := findMatchingIdentity(identities, s.pattern, s.field)
+	identity, err := findMatchingIdentity(identities, s.pattern, s.field, timeNow())
 	if err != nil {
 		store.Close()
 		return cert, nil, nil, fmt.Errorf("%w in %s store", err, s.location)

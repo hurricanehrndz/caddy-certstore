@@ -101,6 +101,20 @@ transport options (timeouts, `tls_*`, etc.) require JSON configuration.
 - `"^client\\.example\\.com$"` - Exact match
 - `"^client-.*\\.example\\.com$"` - Any client certificate under example.com
 
+**Selection:** when several certificates match, the module uses the one that
+is valid now and expires last, so a renewed certificate wins over the old one
+still in the store. Expired and not-yet-valid certificates are never used; if
+no valid certificate matches, provisioning fails.
+
+## Troubleshooting
+
+**macOS: signing fails with `-25308`** (errSecInteractionNotAllowed). The
+private key's access control does not include Caddy, and a launchd daemon
+cannot show the keychain access prompt. Deploy the identity with
+`AllowAllAppsAccess` in its MDM certificate payload, or import it with
+`security import ... -A`. The module does not retry this error, since
+reloading the store cannot change the key's access control.
+
 ## Features
 
 - **Native OS Integration**: Uses platform-specific certificate APIs via [tailscale/certstore](https://github.com/tailscale/certstore)
